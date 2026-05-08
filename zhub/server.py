@@ -407,12 +407,47 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", default=8080, type=int)
     parser.add_argument("--log-level", default="info")
+    parser.add_argument(
+        "--public-tunnel",
+        action="store_true",
+        help="Spawn an ephemeral Cloudflare Tunnel via `cloudflared` and print the public URL.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    if args.public_tunnel:
+        from .tunnel import CloudflareTunnel
+        if not CloudflareTunnel.is_available():
+            print(
+                "warning: --public-tunnel requested but `cloudflared` not found on PATH.\n"
+                "         install: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/\n"
+                "         falling back to localhost-only mode."
+            )
+        else:
+            async def _run_with_tunnel() -> None:
+                tunnel = CloudflareTunnel(local_port=args.port)
+                try:
+                    url = await tunnel.start()
+                    print()
+                    print("=" * 60)
+                    print(f"  zhub public URL:  {url}")
+                    print("=" * 60)
+                    print()
+                    config = uvicorn.Config(
+                        create_app(), host=args.host, port=args.port,
+                        log_level=args.log_level,
+                    )
+                    server = uvicorn.Server(config)
+                    await server.serve()
+                finally:
+                    await tunnel.close()
+            asyncio.run(_run_with_tunnel())
+            return
+
     app = create_app()
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
 
