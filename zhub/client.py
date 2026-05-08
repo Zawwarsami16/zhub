@@ -182,27 +182,30 @@ def publish(
 
 
 async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
+    import inspect
+
     messages = env.payload.get("messages", [])
     options = {k: v for k, v in env.payload.items() if k != "messages"}
     streaming_requested = bool(options.get("stream"))
     try:
         result = pub.chat_handler(messages, options)
 
-        # Coroutines
-        if asyncio.iscoroutine(result):
-            result = await result
-
-        # Sync iterators / async iterators — streaming
-        if hasattr(result, "__aiter__"):
+        # Streaming first — before iscoroutine check, since some Python versions
+        # treat sync generators ambiguously and `await` on a generator throws.
+        if inspect.isasyncgen(result):
             async for chunk in result:
                 await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
             await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
             return
-        if streaming_requested and hasattr(result, "__iter__") and not isinstance(result, (str, dict, bytes)):
+        if inspect.isgenerator(result):
             for chunk in result:
                 await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
             await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
             return
+
+        # Coroutine — await for the final value
+        if inspect.iscoroutine(result):
+            result = await result
 
         # Single-shot
         if isinstance(result, str):
