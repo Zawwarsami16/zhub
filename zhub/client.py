@@ -237,6 +237,7 @@ class ZhubConnection:
     _task: Optional[asyncio.Task] = None
     _ws: Any = None
     _pending: dict[str, asyncio.Future] = field(default_factory=dict)
+    _streams: dict[str, asyncio.Queue] = field(default_factory=dict)
 
     async def chat(self, messages: list[dict[str, Any]],
                    model: str = "default", temperature: float = 0.4,
@@ -250,6 +251,34 @@ class ZhubConnection:
             return await asyncio.wait_for(future, timeout=timeout)
         finally:
             self._pending.pop(env.request_id, None)
+
+    async def chat_stream(self, messages: list[dict[str, Any]],
+                          model: str = "default", temperature: float = 0.4,
+                          max_tokens: int = 4096, timeout_per_chunk: float = 60.0):
+        """Async iterator over streaming chunks from the AI.
+
+        Usage:
+            async for chunk in conn.chat_stream(messages=[...]):
+                print(chunk, end="", flush=True)
+        """
+        env = chat_request(messages, model, temperature, max_tokens,
+                           extras={"stream": True})
+        queue: asyncio.Queue = asyncio.Queue()
+        self._streams[env.request_id] = queue
+        try:
+            await self._ws.send(env.to_json())
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=timeout_per_chunk)
+                except asyncio.TimeoutError:
+                    break
+                if item is None:
+                    break
+                if item.get("done"):
+                    break
+                yield item.get("delta", "")
+        finally:
+            self._streams.pop(env.request_id, None)
 
 
 def connect(
@@ -297,6 +326,15 @@ def connect(
                     fut = conn._pending.get(env.request_id)
                     if fut and not fut.done():
                         fut.set_result(env.payload)
+                    queue = conn._streams.get(env.request_id)
+                    if queue is not None:
+                        await queue.put({"delta": env.payload.get("text", ""), "done": False})
+                        await queue.put({"done": True})
+
+                elif env.type == "chat-chunk":
+                    queue = conn._streams.get(env.request_id)
+                    if queue is not None:
+                        await queue.put(env.payload)
 
                 elif env.type == "invoke-request":
                     asyncio.create_task(_handle_invoke(conn, ws, env))

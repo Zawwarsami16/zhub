@@ -78,6 +78,10 @@ class Hub:
         self.api_keys: dict[str, str] = {}  # api_key -> ai_name (for fast lookup)
         self.lock = asyncio.Lock()
         self.storage = storage
+        # request_id -> (client_websocket, ai_name) for streaming relay from
+        # ws_connect-side chat-requests. Publisher emits chat-chunk back; we
+        # route by request_id to the originating client.
+        self.client_routes: dict[str, tuple[WebSocket, str]] = {}
 
     # publishers --------------------------------------------------------
 
@@ -437,6 +441,13 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                             await target.put(None)
                         else:
                             target.set_result(env.payload)
+                    elif env.request_id in hub.client_routes:
+                        # ws_connect client is awaiting — relay
+                        client_ws, _ = hub.client_routes.pop(env.request_id)
+                        try:
+                            await client_ws.send_text(env.to_json())
+                        except Exception:
+                            pass
 
                 elif env.type == "chat-chunk" and ai_name:
                     publisher = hub.publishers.get(ai_name)
@@ -446,6 +457,14 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                             await target.put(env.payload)
                             if env.payload.get("done"):
                                 await target.put(None)
+                    elif env.request_id in hub.client_routes:
+                        client_ws, _ = hub.client_routes[env.request_id]
+                        try:
+                            await client_ws.send_text(env.to_json())
+                        except Exception:
+                            hub.client_routes.pop(env.request_id, None)
+                        if env.payload.get("done"):
+                            hub.client_routes.pop(env.request_id, None)
 
                 elif env.type == "invoke-request" and ai_name:
                     # Publisher wants to call a connected client.
@@ -505,27 +524,22 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                         break
 
                 elif env.type == "chat-request" and ai_name:
-                    # Client is sending a chat request — proxy through the hub
-                    try:
-                        result = await hub.proxy_chat(
-                            ai_name,
-                            env.payload.get("messages", []),
-                            env.payload.get("model", "default"),
-                            float(env.payload.get("temperature", 0.4)),
-                            int(env.payload.get("max_tokens", 4096)),
-                        )
+                    # Forward as-is to the publisher (preserves stream:true).
+                    # Hub routes chat-response or chat-chunk back via client_routes.
+                    publisher = hub.publishers.get(ai_name)
+                    if publisher is None:
                         await websocket.send_text(
-                            chat_response(
-                                text=result.get("text", ""),
-                                request_id=env.request_id,
-                                finish_reason=result.get("finish_reason", "stop"),
-                                usage=result.get("usage"),
-                            ).to_json()
+                            error_envelope(env.request_id, "ai_offline", "AI not registered").to_json()
                         )
-                    except Exception as e:
-                        await websocket.send_text(
-                            error_envelope(env.request_id, "chat_failed", str(e)).to_json()
-                        )
+                    else:
+                        hub.client_routes[env.request_id] = (websocket, ai_name)
+                        try:
+                            await publisher.websocket.send_text(env.to_json())
+                        except Exception as e:
+                            hub.client_routes.pop(env.request_id, None)
+                            await websocket.send_text(
+                                error_envelope(env.request_id, "chat_failed", str(e)).to_json()
+                            )
 
                 elif env.type == "invoke-result" and ai_name and connection_id:
                     # The client is returning the result of an invoke from the AI
