@@ -23,7 +23,7 @@ except ImportError as e:
 
 from .manifest import Capability, Manifest, chat_only_manifest
 from .protocol import (
-    Envelope, register_publisher, register_connection,
+    Envelope, register_publisher, register_connection, chat_request,
     invoke_request, invoke_result,
 )
 from .errors import AuthError, ConnectionError as ZhubConnectionError
@@ -225,7 +225,6 @@ class ZhubConnection:
                    model: str = "default", temperature: float = 0.4,
                    max_tokens: int = 4096, timeout: float = 60.0) -> dict[str, Any]:
         """Send a chat request through the hub to the AI."""
-        from .protocol import chat_request
         env = chat_request(messages, model, temperature, max_tokens)
         future = asyncio.get_running_loop().create_future()
         self._pending[env.request_id] = future

@@ -38,8 +38,8 @@ except ImportError as e:
     ) from e
 
 from .protocol import (
-    Envelope, registered, chat_request,
-    invoke_request, connection_event, error_envelope, new_request_id,
+    Envelope, registered, chat_request, chat_response,
+    invoke_request, invoke_result, connection_event, error_envelope, new_request_id,
 )
 
 
