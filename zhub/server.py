@@ -472,9 +472,17 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                     capability = env.payload.get("capability")
                     args = env.payload.get("args", {})
                     try:
-                        result = await hub.invoke_capability(ai_name, conn_id, capability, args)
+                        # The connection's invoke-result envelope payload already
+                        # carries {ok, result, error}. Forward it as-is — don't
+                        # re-wrap, otherwise publishers receive double-nested
+                        # {ok:true, result:{ok:..., result:..., error:...}}.
+                        relayed = await hub.invoke_capability(ai_name, conn_id, capability, args)
                         await websocket.send_text(
-                            invoke_result(env.request_id, ok=True, result=result).to_json()
+                            Envelope(
+                                type="invoke-result",
+                                request_id=env.request_id,
+                                payload=relayed,
+                            ).to_json()
                         )
                     except Exception as e:
                         await websocket.send_text(
@@ -625,7 +633,13 @@ def main() -> None:
         action="store_true",
         help="Spawn an ephemeral Cloudflare Tunnel via `cloudflared` and print the public URL.",
     )
+    parser.add_argument(
+        "--db",
+        default="zhub.db",
+        help="SQLite path for persistent publisher registry. Pass empty string to disable.",
+    )
     args = parser.parse_args()
+    db_path: Optional[str] = args.db if args.db else None
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),

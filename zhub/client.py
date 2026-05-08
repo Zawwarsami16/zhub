@@ -116,8 +116,15 @@ def publish(
     operator: str = "",
     contact: str = "",
     on_connection_event: Optional[ConnectionEventHandler] = None,
+    api_key: Optional[str] = None,
 ) -> ZhubPublication:
-    """Create a ZhubPublication. Call .run_forever() to actually start serving."""
+    """Create a ZhubPublication. Call .run_forever() to actually start serving.
+
+    If `api_key` is supplied AND the hub has a stored publisher with the
+    same name and matching key hash, this is a re-registration after a hub
+    restart — the same name + key are reused. Otherwise a fresh registration
+    is performed and a new key is allocated.
+    """
     manifest = chat_only_manifest(
         name=name, description=description,
         operator=operator, contact=contact, public=public,
@@ -141,7 +148,10 @@ def publish(
         log.info("publisher connecting to %s", url)
         async with websockets.connect(url, max_size=10_000_000) as ws:
             pub._ws = ws  # type: ignore[attr-defined]
-            await ws.send(register_publisher(manifest.to_dict(), name).to_json())
+            register_env = register_publisher(manifest.to_dict(), name)
+            if api_key:
+                register_env.payload["api_key"] = api_key
+            await ws.send(register_env.to_json())
 
             async for raw in ws:
                 env = Envelope.from_json(raw)
@@ -192,16 +202,33 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
 
         # Streaming first — before iscoroutine check, since some Python versions
         # treat sync generators ambiguously and `await` on a generator throws.
+        # If the caller requested streaming, emit chat-chunk per yield. Otherwise
+        # accumulate the generator output into a single chat-response so non-
+        # streaming HTTP callers don't time out.
         if inspect.isasyncgen(result):
-            async for chunk in result:
-                await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
-            await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
-            return
+            if streaming_requested:
+                async for chunk in result:
+                    await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
+                await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
+                return
+            else:
+                accumulated = []
+                async for chunk in result:
+                    accumulated.append(str(chunk))
+                payload = {"text": "".join(accumulated), "finish_reason": "stop"}
+                await ws.send(Envelope(type="chat-response", request_id=env.request_id, payload=payload).to_json())
+                return
         if inspect.isgenerator(result):
-            for chunk in result:
-                await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
-            await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
-            return
+            if streaming_requested:
+                for chunk in result:
+                    await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
+                await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
+                return
+            else:
+                accumulated = "".join(str(c) for c in result)
+                payload = {"text": accumulated, "finish_reason": "stop"}
+                await ws.send(Envelope(type="chat-response", request_id=env.request_id, payload=payload).to_json())
+                return
 
         # Coroutine — await for the final value
         if inspect.iscoroutine(result):
