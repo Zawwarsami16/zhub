@@ -116,6 +116,25 @@ def chat_response(text: str, request_id: str, finish_reason: str = "stop",
     )
 
 
+def chat_chunk(delta: str, request_id: str, done: bool = False,
+               finish_reason: Optional[str] = None) -> Envelope:
+    """Streaming chunk — incremental delta of a chat response.
+
+    The publisher sends one or more chat-chunk envelopes followed by a final
+    chunk with done=True. The hub forwards them to the HTTP client as SSE
+    events in OpenAI streaming format.
+    """
+    return Envelope(
+        type="chat-chunk",
+        request_id=request_id,
+        payload={
+            "delta": delta,
+            "done": done,
+            "finish_reason": finish_reason,
+        },
+    )
+
+
 def invoke_request(connection_id: str, capability: str,
                    args: dict[str, Any]) -> Envelope:
     return Envelope(

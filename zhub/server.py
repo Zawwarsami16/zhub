@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
+import json  # noqa: F401  -- used in inline SSE serialization
 import logging
 import secrets
 import time
@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import JSONResponse, StreamingResponse
     import uvicorn
 except ImportError as e:
     raise SystemExit(
@@ -152,13 +152,21 @@ class Hub:
 
     async def proxy_chat(self, ai_name: str, messages: list[dict[str, Any]],
                          model: str, temperature: float, max_tokens: int,
-                         timeout: float = 60.0) -> dict[str, Any]:
-        """Route an HTTP chat request to the publisher and await its response."""
+                         timeout: float = 60.0,
+                         stream: bool = False) -> dict[str, Any]:
+        """Route an HTTP chat request to the publisher and await its response.
+        If stream=True the future delivers a queue of streaming chunks instead."""
         publisher = self.publishers.get(ai_name)
         if publisher is None:
             raise LookupError("publisher not registered")
         env = chat_request(messages=messages, model=model,
-                           temperature=temperature, max_tokens=max_tokens)
+                           temperature=temperature, max_tokens=max_tokens,
+                           extras={"stream": True} if stream else None)
+        if stream:
+            queue: asyncio.Queue = asyncio.Queue()
+            publisher.pending[env.request_id] = queue  # type: ignore[assignment]
+            await publisher.websocket.send_text(env.to_json())
+            return {"_stream_queue": queue, "_request_id": env.request_id}
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         publisher.pending[env.request_id] = future
         try:
@@ -243,7 +251,7 @@ def create_app() -> FastAPI:
         return JSONResponse(m)
 
     @app.post("/{ai_name}/v1/chat/completions")
-    async def chat_completions(ai_name: str, request: Request) -> JSONResponse:
+    async def chat_completions(ai_name: str, request: Request):
         body = await request.json()
         api_key_header = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         if hub.lookup_by_api_key(api_key_header) != ai_name:
@@ -253,6 +261,64 @@ def create_app() -> FastAPI:
         model = body.get("model", "default")
         temperature = float(body.get("temperature", 0.4))
         max_tokens = int(body.get("max_tokens", 4096))
+        stream = bool(body.get("stream", False))
+
+        if stream:
+            try:
+                response = await hub.proxy_chat(
+                    ai_name, messages, model, temperature, max_tokens, stream=True,
+                )
+            except LookupError:
+                raise HTTPException(404, "AI offline")
+
+            queue: asyncio.Queue = response["_stream_queue"]
+            request_id = response["_request_id"]
+
+            async def event_stream():
+                created = int(time.time())
+                completion_id = "chatcmpl-" + new_request_id()[:16]
+                while True:
+                    chunk = await queue.get()
+                    if chunk is None:
+                        break
+                    delta_text = chunk.get("delta", "")
+                    done = chunk.get("done", False)
+                    finish_reason = chunk.get("finish_reason")
+                    if done:
+                        # final chunk per OpenAI streaming spec
+                        sse = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": finish_reason or "stop",
+                            }],
+                        }
+                        yield f"data: {json.dumps(sse)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        break
+                    sse = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": delta_text},
+                            "finish_reason": None,
+                        }],
+                    }
+                    yield f"data: {json.dumps(sse)}\n\n"
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
         try:
             response = await hub.proxy_chat(ai_name, messages, model, temperature, max_tokens)
         except LookupError:
@@ -260,7 +326,7 @@ def create_app() -> FastAPI:
         except asyncio.TimeoutError:
             raise HTTPException(504, "AI did not respond in time")
 
-        # Wrap into OpenAI-style response shape
+        # Wrap into OpenAI-style response shape (non-streaming)
         text = response.get("text", "")
         usage = response.get("usage", {})
         return JSONResponse({
@@ -298,7 +364,25 @@ def create_app() -> FastAPI:
                 elif env.type == "chat-response" and ai_name:
                     publisher = hub.publishers.get(ai_name)
                     if publisher and env.request_id in publisher.pending:
-                        publisher.pending[env.request_id].set_result(env.payload)
+                        target = publisher.pending[env.request_id]
+                        if isinstance(target, asyncio.Queue):
+                            # streaming caller — convert non-streaming response to single chunk
+                            await target.put({"delta": env.payload.get("text", ""),
+                                              "done": False})
+                            await target.put({"done": True,
+                                              "finish_reason": env.payload.get("finish_reason", "stop")})
+                            await target.put(None)
+                        else:
+                            target.set_result(env.payload)
+
+                elif env.type == "chat-chunk" and ai_name:
+                    publisher = hub.publishers.get(ai_name)
+                    if publisher and env.request_id in publisher.pending:
+                        target = publisher.pending[env.request_id]
+                        if isinstance(target, asyncio.Queue):
+                            await target.put(env.payload)
+                            if env.payload.get("done"):
+                                await target.put(None)
 
                 elif env.type == "invoke-request" and ai_name:
                     # Publisher wants to call a connected client.

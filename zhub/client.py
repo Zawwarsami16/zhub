@@ -23,7 +23,7 @@ except ImportError as e:
 
 from .manifest import Capability, Manifest, chat_only_manifest
 from .protocol import (
-    Envelope, register_publisher, register_connection, chat_request,
+    Envelope, register_publisher, register_connection, chat_request, chat_chunk,
     invoke_request, invoke_result,
 )
 from .errors import AuthError, ConnectionError as ZhubConnectionError
@@ -184,10 +184,27 @@ def publish(
 async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
     messages = env.payload.get("messages", [])
     options = {k: v for k, v in env.payload.items() if k != "messages"}
+    streaming_requested = bool(options.get("stream"))
     try:
         result = pub.chat_handler(messages, options)
+
+        # Coroutines
         if asyncio.iscoroutine(result):
             result = await result
+
+        # Sync iterators / async iterators — streaming
+        if hasattr(result, "__aiter__"):
+            async for chunk in result:
+                await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
+            await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
+            return
+        if streaming_requested and hasattr(result, "__iter__") and not isinstance(result, (str, dict, bytes)):
+            for chunk in result:
+                await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
+            await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
+            return
+
+        # Single-shot
         if isinstance(result, str):
             payload = {"text": result, "finish_reason": "stop"}
         elif isinstance(result, dict):
