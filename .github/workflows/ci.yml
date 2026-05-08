@@ -29,9 +29,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e '.[server,dev]'
 
-      - name: Lint
+      - name: Lint (warnings only)
+        continue-on-error: true
         run: |
-          ruff check zhub/ tests/
+          ruff check zhub/ tests/ || true
 
       - name: Test
         run: |

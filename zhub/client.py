@@ -8,11 +8,9 @@ which endpoint they connect to and which envelopes they send/receive.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import threading
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
 try:
@@ -25,10 +23,10 @@ except ImportError as e:
 
 from .manifest import Capability, Manifest, chat_only_manifest
 from .protocol import (
-    Envelope, register_publisher, register_connection, chat_response,
-    invoke_request, invoke_result, error_envelope, new_request_id,
+    Envelope, register_publisher, register_connection,
+    invoke_request, invoke_result,
 )
-from .errors import ZhubError, AuthError, ConnectionError as ZhubConnectionError
+from .errors import AuthError, ConnectionError as ZhubConnectionError
 
 
 log = logging.getLogger("zhub.client")

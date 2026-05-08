@@ -1,8 +1,8 @@
 """Wire protocol envelope round-trip tests."""
 
 from zhub.protocol import (
-    Envelope, register_publisher, register_connection, chat_request, chat_response,
-    invoke_request, invoke_result, connection_event, registered, error_envelope,
+    Envelope, chat_request, invoke_request,
+    connection_event, registered, error_envelope,
 )
 
 
