@@ -37,6 +37,7 @@ except ImportError as e:
         "    pip install 'fastapi>=0.110' 'uvicorn[standard]>=0.27'"
     ) from e
 
+from .persistence import Storage, hash_key
 from .protocol import (
     Envelope, registered, chat_request, chat_response,
     invoke_request, invoke_result, connection_event, error_envelope, new_request_id,
@@ -71,25 +72,50 @@ class ConnectionRegistration:
 
 
 class Hub:
-    def __init__(self) -> None:
+    def __init__(self, storage: Optional[Storage] = None) -> None:
         self.publishers: dict[str, PublisherRegistration] = {}
         self.connections_by_ai: dict[str, dict[str, ConnectionRegistration]] = defaultdict(dict)
         self.api_keys: dict[str, str] = {}  # api_key -> ai_name (for fast lookup)
         self.lock = asyncio.Lock()
+        self.storage = storage
 
     # publishers --------------------------------------------------------
 
     async def register_publisher(self, name: str, manifest: dict[str, Any],
-                                 websocket: WebSocket) -> tuple[str, str]:
-        """Register an AI. Returns (assigned_name, api_key)."""
+                                 websocket: WebSocket,
+                                 desired_api_key: Optional[str] = None) -> tuple[str, str]:
+        """Register an AI. Returns (assigned_name, api_key).
+
+        If `desired_api_key` is supplied AND it matches a previously-stored
+        publisher with the same name, this is a re-registration after a hub
+        restart — keep the same name + same api_key. Otherwise allocate a
+        fresh name + api_key.
+        """
         async with self.lock:
+            # Re-registration path (after hub restart / publisher restart)
+            if desired_api_key and self.storage:
+                stored = self.storage.lookup_publisher(name)
+                if stored and stored["api_key_hash"] == hash_key(desired_api_key):
+                    api_key_hash = stored["api_key_hash"]
+                    self.publishers[name] = PublisherRegistration(
+                        name=name,
+                        manifest=manifest,
+                        websocket=websocket,
+                        api_key_hash=api_key_hash,
+                    )
+                    self.api_keys[desired_api_key] = name
+                    self.storage.upsert_publisher(name, manifest, api_key_hash)
+                    log.info("publisher re-registered: %s (existing key)", name)
+                    return name, desired_api_key
+
+            # Fresh registration
             assigned = name
             i = 1
-            while assigned in self.publishers:
+            while assigned in self.publishers or (self.storage and self.storage.lookup_publisher(assigned)):
                 i += 1
                 assigned = f"{name}-{i}"
             api_key = "zk_" + secrets.token_urlsafe(24)
-            api_key_hash = _hash_key(api_key)
+            api_key_hash = hash_key(api_key)
             self.publishers[assigned] = PublisherRegistration(
                 name=assigned,
                 manifest=manifest,
@@ -97,6 +123,8 @@ class Hub:
                 api_key_hash=api_key_hash,
             )
             self.api_keys[api_key] = assigned
+            if self.storage:
+                self.storage.upsert_publisher(assigned, manifest, api_key_hash)
             log.info("publisher registered: %s", assigned)
             return assigned, api_key
 
@@ -201,20 +229,53 @@ class Hub:
             log.warning("failed to send to publisher %s: %s", ai_name, e)
 
 
-def _hash_key(key: str) -> str:
-    import hashlib
-    return hashlib.sha256(key.encode()).hexdigest()
 
 
 # ---- FastAPI app --------------------------------------------------------
 
-def create_app() -> FastAPI:
-    hub = Hub()
+def create_app(db_path: Optional[str] = None) -> FastAPI:
+    storage = Storage(db_path) if db_path else None
+    hub = Hub(storage=storage)
     app = FastAPI(title="zhub", version="0.1.0")
 
     @app.get("/healthz")
     async def health() -> dict[str, str]:
         return {"status": "ok", "publishers": str(len(hub.publishers))}
+
+    @app.get("/")
+    async def index_html() -> JSONResponse:
+        # Returns the registry HTML page rendered from the template
+        from fastapi.responses import HTMLResponse
+        live = []
+        for name, p in hub.publishers.items():
+            if p.manifest.get("public"):
+                live.append({
+                    "name": name,
+                    "description": p.manifest.get("description", ""),
+                    "operator": p.manifest.get("operator", ""),
+                    "capabilities": [c.get("name") for c in p.manifest.get("capabilities", [])],
+                    "connections": len(hub.connections_by_ai.get(name, {})),
+                    "uptime_seconds": int(time.time() - p.created_at),
+                    "online": True,
+                })
+        # Also include known-but-offline publishers from storage
+        known = {p["name"] for p in live}
+        if hub.storage:
+            for entry in hub.storage.all_publishers():
+                if entry["name"] not in known and entry["manifest"].get("public"):
+                    live.append({
+                        "name": entry["name"],
+                        "description": entry["manifest"].get("description", ""),
+                        "operator": entry["manifest"].get("operator", ""),
+                        "capabilities": [c.get("name") for c in entry["manifest"].get("capabilities", [])],
+                        "connections": 0,
+                        "uptime_seconds": 0,
+                        "online": False,
+                        "last_seen": entry["last_seen"],
+                        "total_chats": entry["total_chats"],
+                    })
+        html = _render_registry_html(live)
+        return HTMLResponse(html)
 
     @app.get("/registry")
     async def registry() -> JSONResponse:
@@ -354,8 +415,10 @@ def create_app() -> FastAPI:
                 env = Envelope.from_json(text)
                 if env.type == "register-publisher" and ai_name is None:
                     desired = env.payload.get("desired_name") or env.payload.get("manifest", {}).get("name", "ai")
+                    desired_key = env.payload.get("api_key")  # for re-registration
                     name, api_key = await hub.register_publisher(
                         desired, env.payload.get("manifest", {}), websocket,
+                        desired_api_key=desired_key,
                     )
                     ai_name = name
                     base_url = "/" + name
@@ -486,6 +549,58 @@ def create_app() -> FastAPI:
     return app
 
 
+def _render_registry_html(entries: list[dict[str, Any]]) -> str:
+    """Tiny inline registry page. Mobile-friendly. Auto-refresh."""
+    rows_html = []
+    for e in entries:
+        status_color = "#39FF7A" if e["online"] else "#7A9C82"
+        status_label = "online" if e["online"] else "offline"
+        caps_html = ", ".join(e.get("capabilities") or [])
+        conn_label = f"{e['connections']} connection(s)" if e["online"] else "—"
+        rows_html.append(f"""
+        <tr>
+          <td><span style="color:{status_color}">●</span> {status_label}</td>
+          <td><a href="/{e['name']}/manifest.json">{e['name']}</a></td>
+          <td>{e['description'] or '—'}</td>
+          <td><small>{caps_html}</small></td>
+          <td>{conn_label}</td>
+        </tr>
+        """)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="refresh" content="10">
+  <title>zhub registry</title>
+  <style>
+    body {{ background:#0A0E0A; color:#D9F2DA; font-family: ui-monospace,SFMono-Regular,Menlo,monospace; padding:16px; }}
+    h1 {{ color:#39FF7A; margin:0 0 4px 0; font-size:1.4rem; }}
+    .tag {{ color:#FFB400; }}
+    table {{ width:100%; border-collapse: collapse; margin-top:16px; }}
+    th, td {{ padding:6px 10px; text-align:left; vertical-align:top; }}
+    th {{ color:#7A9C82; border-bottom:1px solid #1F2D24; font-weight:normal; font-size:0.85rem; }}
+    tr td {{ border-bottom:1px solid #152018; }}
+    a {{ color:#5AC8FA; text-decoration:none; }}
+    a:hover {{ text-decoration:underline; }}
+    small {{ color:#7A9C82; }}
+    footer {{ margin-top:24px; color:#4A6B53; font-size:0.8rem; }}
+  </style>
+</head>
+<body>
+  <h1>zhub <span class="tag">registry</span></h1>
+  <small>WiFi for AIs · {len(entries)} listed · auto-refresh 10s</small>
+  <table>
+    <thead><tr><th>status</th><th>name</th><th>description</th><th>capabilities</th><th>activity</th></tr></thead>
+    <tbody>{''.join(rows_html) if rows_html else '<tr><td colspan="5"><small>no public AIs registered yet — be the first.</small></td></tr>'}</tbody>
+  </table>
+  <footer>
+    <a href="/registry">/registry</a> · <a href="/healthz">/healthz</a> · zhub v0.1.0
+  </footer>
+</body>
+</html>"""
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="zhub hub server")
     parser.add_argument("--host", default="0.0.0.0")
@@ -522,7 +637,7 @@ def main() -> None:
                     print("=" * 60)
                     print()
                     config = uvicorn.Config(
-                        create_app(), host=args.host, port=args.port,
+                        create_app(db_path=db_path), host=args.host, port=args.port,
                         log_level=args.log_level,
                     )
                     server = uvicorn.Server(config)
@@ -532,7 +647,7 @@ def main() -> None:
             asyncio.run(_run_with_tunnel())
             return
 
-    app = create_app()
+    app = create_app(db_path=db_path)
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
 
 
