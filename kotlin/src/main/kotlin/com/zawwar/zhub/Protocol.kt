@@ -57,15 +57,27 @@ internal fun chatRequestEnvelope(
     model: String = "default",
     temperature: Double = 0.4,
     maxTokens: Int = 4096,
-): Envelope = Envelope(
-    type = "chat-request",
-    payload = buildJsonObject {
-        put("messages", json.encodeToJsonElement(messages))
-        put("model", JsonPrimitive(model))
-        put("temperature", JsonPrimitive(temperature))
-        put("max_tokens", JsonPrimitive(maxTokens))
-    },
-)
+): Envelope {
+    // Build the messages array explicitly — generic List<Map<...>> doesn't
+    // resolve cleanly through Json.encodeToJsonElement on Kotlin 2.0+, and an
+    // explicit construction avoids the reified-type ambiguity entirely.
+    val messagesArray = kotlinx.serialization.json.JsonArray(
+        messages.map { m ->
+            buildJsonObject {
+                for ((k, v) in m) put(k, JsonPrimitive(v))
+            }
+        }
+    )
+    return Envelope(
+        type = "chat-request",
+        payload = buildJsonObject {
+            put("messages", messagesArray)
+            put("model", JsonPrimitive(model))
+            put("temperature", JsonPrimitive(temperature))
+            put("max_tokens", JsonPrimitive(maxTokens))
+        },
+    )
+}
 
 internal fun invokeResultEnvelope(
     requestId: String,
