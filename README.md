@@ -60,6 +60,25 @@ python examples/orchestrate_demo.py
 
 The AI saw a connection arrive, registered its capabilities, and invoked them at the user's request — all through the hub, in a single conversation.
 
+### Calling from the OpenAI Python library
+
+```python
+from openai import OpenAI
+
+# IMPORTANT: openai-py expects /v1 in the base_url.
+# Use ".../<name>/v1", not just ".../<name>".
+client = OpenAI(
+    base_url="http://localhost:8080/echo/v1",
+    api_key="zk_...",
+)
+client.chat.completions.create(model="echo", messages=[{"role":"user","content":"hi"}])
+# streaming works too:
+for chunk in client.chat.completions.create(
+    model="echo", messages=[...], stream=True,
+):
+    print(chunk.choices[0].delta.content or "", end="", flush=True)
+```
+
 ---
 
 ## Install

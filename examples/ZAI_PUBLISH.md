@@ -70,8 +70,9 @@ curl https://<hub>.trycloudflare.com/zai/v1/chat/completions \
 ```python
 from openai import OpenAI
 
+# IMPORTANT: openai-py expects /v1 in the base_url. Use ".../zai/v1", not ".../zai".
 client = OpenAI(
-    base_url="https://<hub>.trycloudflare.com/zai",
+    base_url="https://<hub>.trycloudflare.com/zai/v1",
     api_key="zk_a8f2c9d3...",
 )
 
