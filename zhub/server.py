@@ -471,6 +471,19 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 out.append(line)
         return "\n".join(out).rstrip() + "\n" if out else None
 
+    @app.middleware("http")
+    async def _add_entity_hint_header(request, call_next):
+        """On any 4xx/5xx response whose status code has a recipe in
+        entity.md, set X-Zhub-Entity-Hint pointing at /entity/errors/<code>.
+        Purely additive — body shape unchanged. Lets any AI calling the
+        hub self-debug by following the hint to the relevant section."""
+        response = await call_next(request)
+        if 400 <= response.status_code < 600:
+            code = str(response.status_code)
+            if _entity_error(code) is not None:
+                response.headers["X-Zhub-Entity-Hint"] = f"/entity/errors/{code}"
+        return response
+
     @app.get("/entity")
     async def entity_full() -> PlainTextResponse:
         return PlainTextResponse(_entity_text(), media_type="text/markdown")
