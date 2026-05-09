@@ -149,9 +149,9 @@ def publish(
     pub._pending: dict[str, asyncio.Future] = {}  # type: ignore[attr-defined]
     pub._ws = None  # type: ignore[attr-defined]
 
-    async def runner() -> None:
-        url = _to_ws_url(hub_url, "/ws/publish")
-        log.info("publisher connecting to %s", url)
+    async def _serve_one_session(url: str) -> None:
+        """Open one WebSocket session, register, serve until disconnect.
+        On disconnect, returns normally (the outer loop reconnects)."""
         async with websockets.connect(url, max_size=10_000_000) as ws:
             pub._ws = ws  # type: ignore[attr-defined]
             manifest_dict = manifest.to_dict()
@@ -159,8 +159,12 @@ def publish(
                 from .signing import sign_manifest as _sign
                 manifest_dict = _sign(manifest_dict, private_key)
             register_env = register_publisher(manifest_dict, name)
-            if api_key:
-                register_env.payload["api_key"] = api_key
+            # Use the api_key from the prior registration if we already have
+            # one (re-register on the same name via key pinning); fall back
+            # to the operator-supplied api_key on first connect.
+            register_key = pub.api_key or api_key
+            if register_key:
+                register_env.payload["api_key"] = register_key
             await ws.send(register_env.to_json())
 
             async for raw in ws:
@@ -169,7 +173,11 @@ def publish(
                 if env.type == "registered":
                     pub.name = env.payload.get("name", name)
                     pub.base_url = env.payload.get("base_url", "")
-                    pub.api_key = env.payload.get("api_key", "")
+                    # Hub returns the same key on re-registration; only set
+                    # if non-empty so a transient empty value doesn't clear it.
+                    new_key = env.payload.get("api_key", "")
+                    if new_key:
+                        pub.api_key = new_key
                     log.info("publisher registered as %s with key %s",
                              pub.name, pub.api_key[:10] + "…")
 
@@ -196,6 +204,32 @@ def publish(
 
                 elif env.type == "error":
                     log.warning("hub error: %s", env.payload)
+                    # Auth/registration failures are terminal — don't loop.
+                    if env.payload.get("code") == "register_failed":
+                        raise AuthError(env.payload.get("message", "register failed"))
+
+    async def runner() -> None:
+        url = _to_ws_url(hub_url, "/ws/publish")
+        backoff = 1.0
+        while not pub._stop_event.is_set():
+            try:
+                log.info("publisher connecting to %s", url)
+                await _serve_one_session(url)
+                # Clean disconnect — reset backoff before retrying
+                backoff = 1.0
+            except AuthError:
+                # Terminal — stop the loop
+                log.error("publisher registration failed — stopping reconnect loop")
+                return
+            except Exception as e:
+                log.warning("publisher session ended: %s — reconnecting in %.1fs", e, backoff)
+            if pub._stop_event.is_set():
+                return
+            try:
+                await asyncio.wait_for(pub._stop_event.wait(), timeout=backoff)
+            except asyncio.TimeoutError:
+                pass
+            backoff = min(backoff * 2.0, 60.0)
 
     pub._task = asyncio.ensure_future(runner())
     return pub
@@ -278,6 +312,7 @@ class ZhubConnection:
     _ws: Any = None
     _pending: dict[str, asyncio.Future] = field(default_factory=dict)
     _streams: dict[str, asyncio.Queue] = field(default_factory=dict)
+    _stop_event: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def chat(self, messages: list[dict[str, Any]],
                    model: str = "default", temperature: float = 0.4,
@@ -349,9 +384,7 @@ def connect(
         capabilities=handlers,
     )
 
-    async def runner() -> None:
-        url = _to_ws_url(hub_url, "/ws/connect")
-        log.info("client connecting to %s for AI %s", url, ai_name)
+    async def _serve_one_session(url: str) -> None:
         async with websockets.connect(url, max_size=10_000_000) as ws:
             conn._ws = ws
             await ws.send(register_connection(ai_name, api_key, cm.to_dict()).to_json())
@@ -383,6 +416,27 @@ def connect(
                     log.warning("hub error: %s", env.payload)
                     if env.payload.get("code") == "register_failed":
                         raise AuthError(env.payload.get("message", "register failed"))
+
+    async def runner() -> None:
+        url = _to_ws_url(hub_url, "/ws/connect")
+        backoff = 1.0
+        while not conn._stop_event.is_set():
+            try:
+                log.info("client connecting to %s for AI %s", url, ai_name)
+                await _serve_one_session(url)
+                backoff = 1.0
+            except AuthError:
+                log.error("client registration failed — stopping reconnect loop")
+                return
+            except Exception as e:
+                log.warning("client session ended: %s — reconnecting in %.1fs", e, backoff)
+            if conn._stop_event.is_set():
+                return
+            try:
+                await asyncio.wait_for(conn._stop_event.wait(), timeout=backoff)
+            except asyncio.TimeoutError:
+                pass
+            backoff = min(backoff * 2.0, 60.0)
 
     conn._task = asyncio.ensure_future(runner())
     return conn
