@@ -194,6 +194,15 @@ class Hub:
     def lookup_by_api_key(self, api_key: str) -> Optional[str]:
         return self.api_keys.get(api_key)
 
+    def find_capability_connection(self, ai_name: str, capability_name: str) -> Optional[str]:
+        """First connection_id under ai_name whose client_manifest exposes
+        a capability matching capability_name, or None."""
+        for cid, conn in self.connections_by_ai.get(ai_name, {}).items():
+            for cap in conn.client_manifest.get("capabilities", []):
+                if cap.get("name") == capability_name:
+                    return cid
+        return None
+
     # connections -------------------------------------------------------
 
     async def register_connection(self, ai_name: str, api_key: str,
@@ -576,16 +585,71 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-        try:
-            response = await hub.proxy_chat(ai_name, messages, model, temperature, max_tokens)
-        except LookupError:
-            raise HTTPException(404, "AI offline")
-        except asyncio.TimeoutError:
-            raise HTTPException(504, "AI did not respond in time")
+        # Tool-call auto-resolution loop (Phase 1.8). When the publisher
+        # returns tool_calls and the operator hasn't opted out via
+        # X-Zhub-Tool-Resolve: client, the hub invokes the matching
+        # capability on a connected client, appends a role=tool message
+        # with the result, and re-asks the publisher. Bounded by max_tool_iters
+        # to prevent runaway recursion.
+        tool_resolve_mode = request.headers.get("x-zhub-tool-resolve", "auto").lower()
+        max_tool_iters = 4
+        iters = 0
+        running_messages = list(messages)
+        while True:
+            try:
+                response = await hub.proxy_chat(
+                    ai_name, running_messages, model, temperature, max_tokens,
+                )
+            except LookupError:
+                raise HTTPException(404, "AI offline")
+            except asyncio.TimeoutError:
+                raise HTTPException(504, "AI did not respond in time")
+
+            tool_calls = response.get("tool_calls") or []
+            if not tool_calls or tool_resolve_mode == "client" or iters >= max_tool_iters:
+                break
+
+            # Auto-resolve: map each tool call to a connection capability
+            running_messages = running_messages + [{
+                "role": "assistant",
+                "content": response.get("text", "") or None,
+                "tool_calls": tool_calls,
+            }]
+            for tc in tool_calls:
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                cap_name = fn.get("name", "")
+                args_raw = fn.get("arguments", "{}")
+                try:
+                    args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                except (ValueError, TypeError):
+                    args = {}
+                conn_id = hub.find_capability_connection(ai_name, cap_name)
+                if conn_id is None:
+                    tool_result = {"error": f"capability '{cap_name}' not connected"}
+                else:
+                    try:
+                        tool_result = await hub.invoke_capability(
+                            ai_name, conn_id, cap_name, args,
+                        )
+                    except Exception as e:
+                        tool_result = {"error": str(e)}
+                running_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id") if isinstance(tc, dict) else None,
+                    "name": cap_name,
+                    "content": json.dumps(tool_result),
+                })
+            iters += 1
 
         # Wrap into OpenAI-style response shape (non-streaming)
         text = response.get("text", "")
         usage = response.get("usage", {})
+        message: dict[str, Any] = {"role": "assistant", "content": text or None}
+        if tool_calls and tool_resolve_mode == "client":
+            message["tool_calls"] = tool_calls
+            finish_reason = response.get("finish_reason", "tool_calls")
+        else:
+            finish_reason = response.get("finish_reason", "stop")
         return JSONResponse({
             "id": "chatcmpl-" + new_request_id()[:16],
             "object": "chat.completion",
@@ -593,8 +657,8 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             "model": model,
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": text},
-                "finish_reason": response.get("finish_reason", "stop"),
+                "message": message,
+                "finish_reason": finish_reason,
             }],
             "usage": usage,
         })
