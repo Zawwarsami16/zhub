@@ -499,6 +499,81 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             headers={"X-Zhub-Origin": peer_url},
         )
 
+    async def _tunnel_ws_connect(client_ws: WebSocket, peer_url: str,
+                                  initial_register_json: str) -> None:
+        """Phase 1.1b: pump messages bidirectionally between an already-
+        accepted local /ws/connect WebSocket and the peer's /ws/connect.
+
+        ``initial_register_json`` is the (rewritten) register-connection
+        envelope to send first — already accounts for the via chain. After
+        that we shuttle every message verbatim until either side closes."""
+        try:
+            import websockets as _ws
+        except ImportError:
+            await client_ws.send_text(
+                error_envelope("", "register_failed", "peer routing requires websockets").to_json()
+            )
+            return
+
+        # Convert http://host:port → ws://host:port/ws/connect
+        scheme_map = {"http": "ws", "https": "wss"}
+        from urllib.parse import urlparse
+        u = urlparse(peer_url)
+        peer_ws_url = f"{scheme_map.get(u.scheme, 'ws')}://{u.netloc}/ws/connect"
+
+        try:
+            peer_ws = await _ws.connect(peer_ws_url, max_size=10_000_000)
+        except Exception as e:
+            try:
+                await client_ws.send_text(
+                    error_envelope("", "register_failed", f"peer unreachable: {e}").to_json()
+                )
+            except Exception:
+                pass
+            return
+
+        try:
+            await peer_ws.send(initial_register_json)
+        except Exception as e:
+            try:
+                await client_ws.send_text(
+                    error_envelope("", "register_failed", f"peer send failed: {e}").to_json()
+                )
+            finally:
+                await peer_ws.close()
+            return
+
+        async def client_to_peer() -> None:
+            try:
+                while True:
+                    msg = await client_ws.receive_text()
+                    await peer_ws.send(msg)
+            except Exception:
+                pass
+
+        async def peer_to_client() -> None:
+            try:
+                async for msg in peer_ws:
+                    if isinstance(msg, bytes):
+                        msg = msg.decode("utf-8", errors="replace")
+                    await client_ws.send_text(msg)
+            except Exception:
+                pass
+
+        try:
+            done, pending = await asyncio.wait(
+                [asyncio.create_task(client_to_peer()),
+                 asyncio.create_task(peer_to_client())],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+        finally:
+            try:
+                await peer_ws.close()
+            except Exception:
+                pass
+
     @app.get("/{ai_name}/manifest.json")
     async def manifest(ai_name: str) -> JSONResponse:
         publisher = hub.publishers.get(ai_name)
@@ -846,6 +921,26 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                     payload_ai = env.payload.get("ai_name")
                     api_key = env.payload.get("api_key", "")
                     client_manifest = env.payload.get("client_manifest", {})
+
+                    # Phase 1.1b: peer-route this WS if AI lives on a peer hub.
+                    if payload_ai and payload_ai not in hub.publishers:
+                        via = env.payload.get("via") or []
+                        if hub.hub_id in via:
+                            await websocket.send_text(
+                                error_envelope(env.request_id, "register_failed",
+                                               f"loop: {hub.hub_id} already in via").to_json()
+                            )
+                            break
+                        peer_url = await _find_peer_for(payload_ai)
+                        if peer_url is not None:
+                            new_payload = dict(env.payload)
+                            new_payload["via"] = list(via) + [hub.hub_id]
+                            new_env = Envelope(type="register-connection",
+                                               request_id=env.request_id,
+                                               payload=new_payload)
+                            await _tunnel_ws_connect(websocket, peer_url, new_env.to_json())
+                            return  # tunnel handled the rest of the session
+
                     try:
                         connection_id = await hub.register_connection(
                             payload_ai, api_key, client_manifest, websocket,
