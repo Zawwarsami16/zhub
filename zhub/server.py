@@ -18,6 +18,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import os
 import asyncio
 import json  # noqa: F401  -- used in inline SSE serialization
 import logging
@@ -322,6 +323,33 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                     "manifest_url": f"/{name}/manifest.json",
                 })
         return JSONResponse(listings)
+
+    @app.get("/registry/global")
+    async def registry_global() -> JSONResponse:
+        """Local listings + peer-hub listings, annotated with origin.
+        Peers come from ZHUB_PEERS env var (comma-separated URLs).
+        Offline peers are silently skipped — never block the local response."""
+        local: list[dict[str, Any]] = []
+        for name, p in hub.publishers.items():
+            if p.manifest.get("public"):
+                local.append({
+                    "name": name,
+                    "description": p.manifest.get("description", ""),
+                    "capabilities": [c.get("name") for c in p.manifest.get("capabilities", [])],
+                    "manifest_url": f"/{name}/manifest.json",
+                    "origin": "self",
+                })
+        peers_env = os.environ.get("ZHUB_PEERS", "")
+        peers = [p.strip() for p in peers_env.split(",") if p.strip()]
+        if peers:
+            from .federation import PeerRegistry
+            pr = PeerRegistry(peers)
+            try:
+                peer_entries = await pr.aggregate()
+            finally:
+                await pr.close()
+            return JSONResponse(local + peer_entries)
+        return JSONResponse(local)
 
     @app.get("/{ai_name}/manifest.json")
     async def manifest(ai_name: str) -> JSONResponse:
@@ -673,8 +701,16 @@ def main() -> None:
         default="zhub.db",
         help="SQLite path for persistent publisher registry. Pass empty string to disable.",
     )
+    parser.add_argument(
+        "--peers",
+        default="",
+        help="Comma-separated peer hub URLs for read-only federation. "
+             "Peer registries surface at /registry/global with origin annotation.",
+    )
     args = parser.parse_args()
     db_path: Optional[str] = args.db if args.db else None
+    if args.peers:
+        os.environ["ZHUB_PEERS"] = args.peers
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
