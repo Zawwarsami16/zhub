@@ -80,9 +80,6 @@ class Hub:
         self.api_keys: dict[str, str] = {}  # api_key -> ai_name (for fast lookup)
         self.lock = asyncio.Lock()
         self.storage = storage
-        # Hub identity for cross-hub loop prevention. Stable per process; can
-        # be pinned via ZHUB_HUB_ID for deterministic forwarding chains.
-        self.hub_id = os.environ.get("ZHUB_HUB_ID") or "hub_" + secrets.token_urlsafe(6)
         # request_id -> (client_websocket, ai_name) for streaming relay from
         # ws_connect-side chat-requests. Publisher emits chat-chunk back; we
         # route by request_id to the originating client.
@@ -91,6 +88,16 @@ class Hub:
         # configured from the publisher's manifest.rate_limit. Key into the
         # window is the api_key string used by the caller.
         self._rate_windows: dict[str, SlidingWindow] = {}
+        # Hub identity for cross-hub loop prevention. Stable per process; can
+        # be pinned via ZHUB_HUB_ID for deterministic forwarding chains.
+        self.hub_id = os.environ.get("ZHUB_HUB_ID") or "hub_" + secrets.token_urlsafe(6)
+        # Observability counters. Per-AI dict-of-dicts so /metrics can show
+        # which publisher is hot. Counters are best-effort, not transactional.
+        self.started_at = time.time()
+        self.metrics: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    def bump(self, ai_name: str, key: str, delta: int = 1) -> None:
+        self.metrics[ai_name][key] += delta
 
     def check_rate_limit(self, ai_name: str, api_key: str) -> tuple[bool, Optional[float]]:
         """Returns (allowed, retry_after_seconds_or_None)."""
@@ -345,6 +352,24 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     @app.get("/healthz")
     async def health() -> dict[str, str]:
         return {"status": "ok", "publishers": str(len(hub.publishers))}
+
+    @app.get("/metrics")
+    async def metrics() -> JSONResponse:
+        """Best-effort observability snapshot. Counters reset on hub restart."""
+        by_ai = {
+            name: dict(counts) for name, counts in hub.metrics.items()
+        }
+        for name, p in hub.publishers.items():
+            entry = by_ai.setdefault(name, {})
+            entry["connections"] = len(hub.connections_by_ai.get(name, {}))
+            entry["uptime_seconds"] = int(time.time() - p.created_at)
+        return JSONResponse({
+            "hub_id": hub.hub_id,
+            "uptime_seconds": int(time.time() - hub.started_at),
+            "publishers": len(hub.publishers),
+            "connections": sum(len(c) for c in hub.connections_by_ai.values()),
+            "by_ai": by_ai,
+        })
 
     @app.get("/")
     async def index_html() -> JSONResponse:
@@ -615,6 +640,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             peer_url = await _find_peer_for(ai_name)
             if peer_url is None:
                 raise HTTPException(404, f"AI '{ai_name}' not found locally or in peers")
+            hub.bump(ai_name, "peer_proxied")
             return await _proxy_to_peer(
                 peer_url, ai_name, body, api_key_header,
                 forwarded_by_chain=chain + [hub.hub_id],
@@ -626,6 +652,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         # Rate-limit enforcement (Phase 1.7)
         rl_ok, retry_after = hub.check_rate_limit(ai_name, api_key_header)
         if not rl_ok:
+            hub.bump(ai_name, "rate_limited")
             ra = max(1, int(round(retry_after or 1.0)))
             return JSONResponse(
                 status_code=429,
@@ -639,6 +666,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 headers={"Retry-After": str(ra)},
             )
 
+        hub.bump(ai_name, "chat_requests")
         messages = body.get("messages", [])
         model = body.get("model", "default")
         temperature = float(body.get("temperature", 0.4))
@@ -773,6 +801,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                     "args": args,
                     "result": tool_result,
                 })
+                hub.bump(ai_name, "tool_calls_resolved")
                 running_messages.append({
                     "role": "tool",
                     "tool_call_id": tc_id,
