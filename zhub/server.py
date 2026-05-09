@@ -759,13 +759,16 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             if not tool_calls or tool_resolve_mode == "client" or iters >= max_tool_iters:
                 break
 
-            # Auto-resolve: map each tool call to a connection capability
+            # Auto-resolve: map each tool call to a connection capability,
+            # invoke all in parallel (real LLMs frequently emit several at
+            # once), then thread the results back in deterministic order.
             running_messages = running_messages + [{
                 "role": "assistant",
                 "content": response.get("text", "") or None,
                 "tool_calls": tool_calls,
             }]
-            for tc in tool_calls:
+
+            async def _resolve_one(tc: Any) -> dict[str, Any]:
                 fn = tc.get("function", {}) if isinstance(tc, dict) else {}
                 cap_name = fn.get("name", "")
                 args_raw = fn.get("arguments", "{}")
@@ -775,14 +778,12 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                     args = {}
                 conn_id = hub.find_capability_connection(ai_name, cap_name)
                 if conn_id is None:
-                    tool_result = {"error": f"capability '{cap_name}' not connected"}
+                    tool_result: Any = {"error": f"capability '{cap_name}' not connected"}
                 else:
                     try:
                         relayed = await hub.invoke_capability(
                             ai_name, conn_id, cap_name, args,
                         )
-                        # invoke-result envelope wraps {ok, result, error};
-                        # unwrap so the LLM and audit see the actual return.
                         if isinstance(relayed, dict) and "ok" in relayed:
                             if relayed.get("ok"):
                                 tool_result = relayed.get("result")
@@ -794,19 +795,22 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                             tool_result = relayed
                     except Exception as e:
                         tool_result = {"error": str(e)}
-                tc_id = tc.get("id") if isinstance(tc, dict) else None
-                tool_audit.append({
-                    "tool_call_id": tc_id,
+                return {
+                    "tool_call_id": tc.get("id") if isinstance(tc, dict) else None,
                     "name": cap_name,
                     "args": args,
                     "result": tool_result,
-                })
+                }
+
+            resolved = await asyncio.gather(*(_resolve_one(tc) for tc in tool_calls))
+            for entry in resolved:
+                tool_audit.append(entry)
                 hub.bump(ai_name, "tool_calls_resolved")
                 running_messages.append({
                     "role": "tool",
-                    "tool_call_id": tc_id,
-                    "name": cap_name,
-                    "content": json.dumps(tool_result),
+                    "tool_call_id": entry["tool_call_id"],
+                    "name": entry["name"],
+                    "content": json.dumps(entry["result"]),
                 })
             iters += 1
 
