@@ -31,7 +31,7 @@ from typing import Any, Optional
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse, StreamingResponse
+    from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
     import uvicorn
 except ImportError as e:
     raise SystemExit(
@@ -408,6 +408,87 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     @app.get("/healthz")
     async def health() -> dict[str, str]:
         return {"status": "ok", "publishers": str(len(hub.publishers))}
+
+    # --- entity (zhub's self-knowledge layer) -----------------------------
+    # Single markdown file shipped with the hub. Any AI attached can fetch
+    # it and become instantly fluent in zhub — routes, errors, patterns,
+    # debug recipes, perf tips. Sectioned access for cheap lookups.
+
+    import functools as _functools
+    from pathlib import Path as _Path
+
+    @_functools.lru_cache(maxsize=1)
+    def _entity_text() -> str:
+        path = _Path(__file__).parent / "entity.md"
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return "# zhub entity\n(entity.md missing in this install)\n"
+
+    def _entity_section(name: str) -> Optional[str]:
+        """Return the markdown subtree under `## <name>` (case-insensitive),
+        or None if no such section exists."""
+        text = _entity_text()
+        target = f"## {name.lower().strip()}"
+        lines = text.splitlines()
+        out: list[str] = []
+        capturing = False
+        for line in lines:
+            stripped = line.strip().lower()
+            if stripped.startswith("## "):
+                if capturing:
+                    break
+                if stripped == target:
+                    capturing = True
+                    out.append(line)
+                    continue
+            if capturing:
+                out.append(line)
+        return "\n".join(out).rstrip() + "\n" if out else None
+
+    def _entity_error(code: str) -> Optional[str]:
+        """Return the markdown block under `### ... <code> ...` in the
+        ## errors section, or None. Matches the code as a substring anywhere
+        in the heading after stripping backticks/punctuation."""
+        section = _entity_section("errors")
+        if section is None:
+            return None
+        target = code.lower().strip()
+        out: list[str] = []
+        capturing = False
+        for line in section.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("### "):
+                if capturing:
+                    break
+                heading = stripped[4:].lower().replace("`", " ").replace("'", " ")
+                tokens = heading.split()
+                if target in tokens:
+                    capturing = True
+                    out.append(line)
+                    continue
+            if capturing:
+                out.append(line)
+        return "\n".join(out).rstrip() + "\n" if out else None
+
+    @app.get("/entity")
+    async def entity_full() -> PlainTextResponse:
+        return PlainTextResponse(_entity_text(), media_type="text/markdown")
+
+    @app.get("/entity/errors/{code}")
+    async def entity_error(code: str) -> PlainTextResponse:
+        body = _entity_error(code)
+        if body is None:
+            raise HTTPException(404, f"no entity entry for error '{code}'")
+        return PlainTextResponse(body, media_type="text/markdown")
+
+    @app.get("/entity/{section}")
+    async def entity_section(section: str) -> PlainTextResponse:
+        body = _entity_section(section)
+        if body is None:
+            raise HTTPException(404,
+                f"no entity section '{section}'. try: routes, errors, patterns, debug, perf, conventions, architecture")
+        return PlainTextResponse(body, media_type="text/markdown")
 
     @app.get("/metrics")
     async def metrics() -> JSONResponse:
