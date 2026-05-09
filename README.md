@@ -251,12 +251,26 @@ Every AI tool I've written ends up needing the same plumbing: a way to be reache
 
 ## Roadmap
 
-- **0.1 (this release)** — publish, connect, hub server, JSON manifest, OpenAI-compat proxy, capability invocation.
-- **0.2** — Cloudflare Tunnel auto-config so `publish()` works from any laptop without a public IP. MCP-format bridging.
-- **0.3** — TypeScript/JavaScript client library so browser apps and Node services can `connect()`. Kotlin client for Android (Loki).
-- **0.4** — Streaming responses end-to-end (SSE through the hub). Persistent connection registry across hub restarts. Public registry UI.
-- **0.5** — Rate-limit policies, multi-tier API keys, audit log surface.
-- **1.0** — Stable manifest schema, signed manifests, federation between hubs.
+Shipped:
+
+- **0.1** — publish, connect, hub server, JSON manifest, OpenAI-compat proxy, capability invocation.
+- **0.2** — Cloudflare Tunnel auto-config (`--public-tunnel`).
+- **0.3** — Kotlin client library for Loki/JVM. JS/TS client (`js/`).
+- **0.4** — Streaming responses end-to-end (SSE through hub).
+- **0.5** — SQLite persistence, re-registration after restart, public registry UI.
+- **0.9** — Multi-AI council pattern.
+- **1.0** — Signed manifests (ed25519) with key pinning, read-only federation (`/registry/global`).
+- **1.1** — Cross-hub call routing: hub A proxies a chat to hub B if B has the AI; loop prevention via `X-Zhub-Forwarded-By`.
+- **1.2** — JS/TS client (`@zawwarsami/zhub`): publish/connect with auto-reconnect, bidirectional invoke.
+- **1.7** — Sliding-window rate limiting per api_key, configured by `manifest.rate_limit` (`"60/min"`, `"10/s"`, …).
+- **1.8** — OpenAI tool calls end-to-end: hub auto-invokes connected-client capabilities matching `tool_calls`, feeds results back as `role:tool` messages, returns final text. Audit log in `usage.tool_results`. Opt out per request with `X-Zhub-Tool-Resolve: client`.
+- **1.9** — Auto-injection of connected-client capabilities into the chat-request as OpenAI tools, so the LLM sees runtime tools without operator plumbing.
+
+Next:
+
+- WebSocket connections to federated AIs (cross-hub WS routing — Phase 1.1b).
+- Multi-tier API keys + per-tier rate limits.
+- Tool streaming (chunked tool_calls via SSE) and parallel tool calls.
 
 ---
 

@@ -70,8 +70,13 @@ Tests: `pytest -v`. The e2e tests spin up the hub in-process and run the full pu
 - **Phase 0.9** ✅ — Multi-AI council pattern test + `examples/council_demo.py`.
 - **Phase 1.0a** ✅ — ed25519 signed manifests + key pinning + backwards compat for unsigned.
 - **Phase 1.0b** ✅ — Read-only federation. `ZHUB_PEERS` env / `--peers` CLI. `/registry/global` aggregator with origin annotation.
+- **Phase 1.1** ✅ — Cross-hub call routing. Hub A proxies chat to hub B if B has the AI. Loop prevention via `X-Zhub-Forwarded-By`. Each hub has a `hub_id` (env `ZHUB_HUB_ID` or random per-process). Response carries `X-Zhub-Origin: <peer_url>`. Local matches always beat peer matches.
+- **Phase 1.2** ✅ — JS/TS client library at `js/`. Built on `node:test`, ESM-only. `ZhubPublication` and `ZhubConnection` mirror the Python API. Auto-reconnect with exponential backoff.
+- **Phase 1.7** ✅ — Sliding-window rate limiting per api_key. Configured via `manifest.rate_limit` (defaults `"60/min"`). 429 + `Retry-After` header on breach. `zhub.ratelimit.parse_rate` + `SlidingWindow`.
+- **Phase 1.8** ✅ — OpenAI tool calls end-to-end. Publisher emits `tool_calls`, hub matches each by name to a connected client's capability, invokes via existing invoke-request envelope, appends `role:tool` message, re-asks publisher. Bounded recursion (4). `usage.tool_results` audit log. Opt-out per request with `X-Zhub-Tool-Resolve: client`. Invoke envelope unwrapped before feed-back.
+- **Phase 1.9** ✅ — Auto-injection of connected capabilities as OpenAI `tools` in the chat-request. Caller-supplied tools merge with hub-injected; caller wins on name collision. `Hub.build_tools_for(ai_name, caller_tools)` is the single source.
 
-**Phase 1.1+ (not started):** cross-hub call routing (route a chat to peer hub's publisher), signed peer relationships, named tunnels, real ZAI integration via `zai_publish.py` (ZAI gateway needs to be up).
+**Next (not started):** cross-hub WebSocket routing (Phase 1.1b — connect()-side client to a federated AI), tool streaming via SSE (Phase 1.8c), parallel tool calls (1.8b), multi-tier API keys, real ZAI integration via `zai_publish.py`.
 
 ## 6. File layout (what's where)
 
@@ -86,10 +91,12 @@ Tests: `pytest -v`. The e2e tests spin up the hub in-process and run the full pu
 | SQLite persistence | `zhub/persistence.py` |
 | ed25519 signing | `zhub/signing.py` |
 | Federation | `zhub/federation.py` |
+| Rate limiting | `zhub/ratelimit.py` |
 | Custom exceptions | `zhub/errors.py` |
 | Kotlin client (Loki/JVM) | `kotlin/src/main/kotlin/com/zawwar/zhub/{Manifest,Protocol,Connection,loki/LokiZhubBridge}.kt` |
+| JS/TS client | `js/src/{manifest,protocol,errors,client,index}.ts` — `npm test` runs `node:test` against compiled output |
 | Examples | `examples/{publish,connect,orchestrate,council}_demo.py`, `examples/zai_publish.py` |
-| Tests | `tests/test_{manifest,protocol,e2e,streaming,persistence,invoke_shape,generator_nonstreaming,council,signing,federation}.py` |
+| Tests | `tests/test_{manifest,protocol,e2e,streaming,persistence,invoke_shape,generator_nonstreaming,council,signing,federation,rate_limit,cross_hub_routing,tool_calls,capability_injection}.py` |
 | CI | `.github/workflows/ci.yml` — Python matrix + Kotlin job |
 | Container | `Dockerfile` |
 | Package config | `pyproject.toml` — extras: `[server]`, `[crypto]`, `[dev]` |
@@ -160,4 +167,4 @@ docker run -p 8080:8080 zhub
 
 ---
 
-**Last updated:** 2026-05-09 (Phases 0.7 → 1.0b shipped autonomously via superpowers brainstorming → writing-plans → TDD execution → verification. 32/32 pytest passing. Spec at `docs/superpowers/specs/2026-05-09-zhub-phase-0.7-to-1.0-design.md`. Plan at `docs/superpowers/plans/2026-05-09-zhub-phase-0.7-to-1.0.md`.)
+**Last updated:** 2026-05-09 (Phases 1.7 / 1.2 / 1.1 / 1.8 / 1.9 shipped autonomously in one continuous run. 56/56 pytest + 13/13 node:test passing, all CI runs green. Spec at `docs/superpowers/specs/2026-05-09-zhub-phase-1.7-1.2-1.1-1.8-design.md`. Phase 1.9 was an extension after the spec — capability auto-injection so the LLM sees runtime tools without operator plumbing.)
