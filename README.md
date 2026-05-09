@@ -237,6 +237,29 @@ The hub validates `args` against the capability's declared JSON schema before ro
 
 ---
 
+## Swap the brain underneath
+
+Same publisher, four brain options, one CLI flag:
+
+```bash
+# auto-detect — uses Ollama if running locally, else Groq/OpenAI/Cerebras
+# whichever has credentials in the env
+python examples/multi_brain_publisher.py --name my-ai
+
+# explicit choice
+GROQ_API_KEY=gsk_... python examples/multi_brain_publisher.py --brain groq --name my-ai
+OLLAMA_HOST=http://localhost:11434 python examples/multi_brain_publisher.py --brain ollama --name my-ai
+
+# what's available right now?
+python examples/multi_brain_publisher.py --list
+```
+
+The publisher prints a `zk_` key on startup. Pocket / Loki / curl / Claude Desktop all reach it via `<hub>/<name>/v1/chat/completions` — restart the publisher with a different brain and **the key stays the same** (re-registration via persistence). External clients see no change; the brain underneath silently swaps.
+
+Adapters live in `zhub/brains/` and implement a tiny `BrainAdapter` interface (one async streaming method). Adding a new brain is ~80 lines.
+
+---
+
 ## Manifest format (v0.1)
 
 When an AI registers, it publishes a manifest like:

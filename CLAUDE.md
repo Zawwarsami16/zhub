@@ -82,8 +82,11 @@ Tests: `pytest -v`. The e2e tests spin up the hub in-process and run the full pu
 - **Phase 2.1** ✅ — `zhub.mcp_server` exposes any zhub-published AI as an MCP stdio server. Drop-in for Claude Desktop / Cursor / Cline. Implements initialize / tools/list / tools/call. One tool `chat` per server. Closes the loop with the existing `examples/mcp_bridge.py`.
 - **Phase 2.2** ✅ — JSON-Schema validation of tool args before invoke. Tight subset (type/required/properties/items) at `zhub/validate.py`, no new deps. Bad args → validation error fed back to LLM as tool_result; capability handler is never invoked with garbage.
 - **federation_demo** ✅ — runnable `examples/federation_demo.py` spins up two hubs in-process, peers A→B, exercises 1.0b/1.1/1.1b in sequence.
+- **Phase 3.0** ✅ — `zhub/entity.md` + `GET /entity` + `GET /entity/<section>` + `GET /entity/errors/<code>`. Single source of truth so any AI attaching to the hub becomes instantly fluent (routes, errors, patterns, debug recipes, perf tips).
+- **Phase 3.0b** ✅ — `X-Zhub-Entity-Hint` header on 4xx/5xx responses pointing at `/entity/errors/<code>`. Closes the entity loop: any AI hitting an error gets a self-debug pointer.
+- **Phase 4.0** ✅ — `zhub/brains/` package: `BrainAdapter` ABC + four streaming adapters (Ollama, Groq, OpenAI, Cerebras). `detect()` walks them in priority order. `examples/multi_brain_publisher.py` exposes `--brain auto|ollama|groq|openai|cerebras` so the brain underneath any zhub publisher is one CLI flag away from a swap. External clients (Pocket/Loki/curl/MCP) see no change; key stays stable across brain swaps via persistence.
 
-**Next (not started):** tool streaming via SSE (Phase 1.8c — would need to detect tool_calls during stream and pause), multi-tier API keys, real ZAI integration via `zai_publish.py`, exposing AI's connected capabilities as separate MCP tools (so Claude Desktop can call `send_whatsapp` directly).
+**Next (not started):** tool streaming via SSE (Phase 1.8c — would need to detect tool_calls during stream and pause), Entity v2 (operator-extensible recipes), multi-tier API keys, real ZAI integration via `zai_publish.py`.
 
 ## 6. File layout (what's where)
 
