@@ -59,28 +59,41 @@ Tests: `pytest -v`. The e2e tests spin up the hub in-process and run the full pu
 ## 5. Phase status
 
 - **Phase 0** ✅ — `zhub.publish()`, hub server, OpenAI-compat /v1/chat/completions proxy, manifest at /<name>/manifest.json, public /registry.
-- **Phase 1** ✅ — `zhub.connect()`, capability registration, bidirectional invoke from publisher to connection through the hub. Connection-event delivery to publisher.
-- **Phase 0.2 (next)** — Cloudflare Tunnel auto-config so publish works from a laptop without a public IP.
-- **Phase 0.3** — Kotlin client lib for Loki Android. JS client for browser/Node.
-- **Phase 0.4** — Streaming chat responses end-to-end (SSE through hub).
-- **Phase 0.5** — Persistent registry across hub restarts. Web UI for /registry.
-- **Phase 1.0** — Signed manifests, hub federation.
+- **Phase 1** ✅ — `zhub.connect()`, capability registration, bidirectional invoke from publisher to connection through the hub.
+- **Phase 0.2** ✅ — Cloudflare Tunnel auto-config (`--public-tunnel`). cloudflared install + usage at `docs/CLOUDFLARED.md`. Live-verified end-to-end on 2026-05-09.
+- **Phase 0.3** ✅ — Kotlin client lib (`kotlin/`). JVM/Android-compatible. ZhubConnection + connect() + LokiZhubBridge.
+- **Phase 0.4** ✅ — Streaming end-to-end. `chat-chunk` envelope. `conn.chat_stream()` async iterator on connect side.
+- **Phase 0.5** ✅ — SQLite persistence (`zhub.db`). Re-registration via `publish(api_key=...)`. Web UI at `/`.
+- **Phase 0.6** ✅ — `examples/zai_publish.py` proxy for ZAI. `kotlin/.../loki/LokiZhubBridge.kt` drop-in.
+- **Phase 0.7** ✅ — Kotlin gradle CI job. Schema-drift regression test.
+- **Phase 0.8** ✅ — cloudflared install + live tunnel verification doc.
+- **Phase 0.9** ✅ — Multi-AI council pattern test + `examples/council_demo.py`.
+- **Phase 1.0a** ✅ — ed25519 signed manifests + key pinning + backwards compat for unsigned.
+- **Phase 1.0b** ✅ — Read-only federation. `ZHUB_PEERS` env / `--peers` CLI. `/registry/global` aggregator with origin annotation.
+
+**Phase 1.1+ (not started):** cross-hub call routing (route a chat to peer hub's publisher), signed peer relationships, named tunnels, real ZAI integration via `zai_publish.py` (ZAI gateway needs to be up).
 
 ## 6. File layout (what's where)
 
 | Concern | Where |
 |---|---|
-| Public API surface | `zhub/__init__.py` — re-exports `publish`, `connect`, `Manifest`, `Capability`, errors. |
-| Manifest schema + builders | `zhub/manifest.py` — `Manifest`, `Capability`, `chat_only_manifest()`. |
-| Wire protocol envelopes | `zhub/protocol.py` — `Envelope` + helpers (`register_publisher`, `chat_request`, `invoke_request`, etc.). |
-| Hub server (FastAPI + WebSocket) | `zhub/server.py` — `create_app()`, `Hub` class, HTTP routes + `/ws/publish` + `/ws/connect`. |
-| Client library (publish + connect) | `zhub/client.py` — `publish()`, `connect()`, `ZhubPublication`, `ZhubConnection`. |
-| Custom exceptions | `zhub/errors.py` — `ZhubError`, `AuthError`, `ConnectionError`, `ManifestError`, `CapabilityError`, `HubError`. |
-| Examples | `examples/publish_demo.py`, `examples/connect_demo.py`, `examples/orchestrate_demo.py`. |
-| Tests | `tests/test_manifest.py`, `tests/test_protocol.py`, `tests/test_e2e.py`. |
-| CI | `.github/workflows/ci.yml`. |
-| Container | `Dockerfile`. |
-| Package config | `pyproject.toml`. |
+| Public API surface | `zhub/__init__.py` — re-exports `publish`, `connect`, `Manifest`, `Capability`, errors, signing API (when `[crypto]` installed). |
+| Manifest schema + builders | `zhub/manifest.py` |
+| Wire protocol envelopes | `zhub/protocol.py` — `Envelope` + helpers (`register_publisher`, `chat_request`, `chat_chunk`, `invoke_request`, etc.) |
+| Hub server (FastAPI + WebSocket) | `zhub/server.py` — `create_app()`, `Hub`, `/ws/publish`, `/ws/connect`, `/registry`, `/registry/global`, `/`. |
+| Client library | `zhub/client.py` — `publish()`, `connect()`, `chat_stream()`. |
+| Cloudflare Tunnel wrapper | `zhub/tunnel.py` |
+| SQLite persistence | `zhub/persistence.py` |
+| ed25519 signing | `zhub/signing.py` |
+| Federation | `zhub/federation.py` |
+| Custom exceptions | `zhub/errors.py` |
+| Kotlin client (Loki/JVM) | `kotlin/src/main/kotlin/com/zawwar/zhub/{Manifest,Protocol,Connection,loki/LokiZhubBridge}.kt` |
+| Examples | `examples/{publish,connect,orchestrate,council}_demo.py`, `examples/zai_publish.py` |
+| Tests | `tests/test_{manifest,protocol,e2e,streaming,persistence,invoke_shape,generator_nonstreaming,council,signing,federation}.py` |
+| CI | `.github/workflows/ci.yml` — Python matrix + Kotlin job |
+| Container | `Dockerfile` |
+| Package config | `pyproject.toml` — extras: `[server]`, `[crypto]`, `[dev]` |
+| Docs | `README.md`, `docs/CLOUDFLARED.md`, `docs/superpowers/specs/...`, `docs/superpowers/plans/...`, `examples/ZAI_PUBLISH.md`, `kotlin/LOKI_INTEGRATION.md` |
 
 ## 7. Architecture in 4 lines
 
@@ -147,4 +160,4 @@ docker run -p 8080:8080 zhub
 
 ---
 
-**Last updated:** 2026-05-08 (Phase 0+1 ship).
+**Last updated:** 2026-05-09 (Phases 0.7 → 1.0b shipped autonomously via superpowers brainstorming → writing-plans → TDD execution → verification. 32/32 pytest passing. Spec at `docs/superpowers/specs/2026-05-09-zhub-phase-0.7-to-1.0-design.md`. Plan at `docs/superpowers/plans/2026-05-09-zhub-phase-0.7-to-1.0.md`.)
