@@ -1,0 +1,44 @@
+{
+  "name": "@zawwarsami/zhub",
+  "version": "0.1.0",
+  "description": "JS/TS client for zhub — WiFi for AIs.",
+  "license": "MIT",
+  "author": "Zawwar Sami <zawwarsami16@gmail.com>",
+  "homepage": "https://github.com/Zawwarsami16/zhub",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zawwarsami16/zhub.git",
+    "directory": "js"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

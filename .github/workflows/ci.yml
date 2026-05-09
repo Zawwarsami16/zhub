@@ -58,3 +58,29 @@ jobs:
         working-directory: kotlin
         run: |
           gradle test build --no-daemon --stacktrace
+
+  js-test:
+    name: JS/TS module test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: js/package-lock.json
+
+      - name: Install
+        working-directory: js
+        run: npm install --no-audit --no-fund
+
+      - name: Type check
+        working-directory: js
+        run: npx tsc -p tsconfig.json --noEmit
+
+      - name: Test
+        working-directory: js
+        run: npm test
