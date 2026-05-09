@@ -117,6 +117,7 @@ def publish(
     contact: str = "",
     on_connection_event: Optional[ConnectionEventHandler] = None,
     api_key: Optional[str] = None,
+    private_key: Optional[str] = None,
 ) -> ZhubPublication:
     """Create a ZhubPublication. Call .run_forever() to actually start serving.
 
@@ -124,6 +125,11 @@ def publish(
     same name and matching key hash, this is a re-registration after a hub
     restart — the same name + key are reused. Otherwise a fresh registration
     is performed and a new key is allocated.
+
+    If `private_key` (hex-encoded ed25519 private key) is supplied, the
+    manifest is signed before publish. The hub validates the signature on
+    register and stores the public key. Consumers fetching
+    `/<name>/manifest.json` can verify identity without trusting the hub.
     """
     manifest = chat_only_manifest(
         name=name, description=description,
@@ -148,7 +154,11 @@ def publish(
         log.info("publisher connecting to %s", url)
         async with websockets.connect(url, max_size=10_000_000) as ws:
             pub._ws = ws  # type: ignore[attr-defined]
-            register_env = register_publisher(manifest.to_dict(), name)
+            manifest_dict = manifest.to_dict()
+            if private_key:
+                from .signing import sign_manifest as _sign
+                manifest_dict = _sign(manifest_dict, private_key)
+            register_env = register_publisher(manifest_dict, name)
             if api_key:
                 register_env.payload["api_key"] = api_key
             await ws.send(register_env.to_json())

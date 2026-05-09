@@ -45,6 +45,15 @@ from .client import publish, connect, ZhubPublication, ZhubConnection
 from .manifest import Manifest, Capability
 from .errors import ZhubError, AuthError, ConnectionError as ZhubConnectionError
 
+# Signing API is optional — only available when 'cryptography' is installed.
+try:
+    from .signing import (
+        generate_keypair, sign_manifest, verify_manifest, public_key_from_private,
+    )
+    _SIGNING_AVAILABLE = True
+except SystemExit:
+    _SIGNING_AVAILABLE = False
+
 __version__ = "0.1.0"
 __all__ = [
     "publish",
@@ -57,3 +66,5 @@ __all__ = [
     "AuthError",
     "ZhubConnectionError",
 ]
+if _SIGNING_AVAILABLE:
+    __all__ += ["generate_keypair", "sign_manifest", "verify_manifest", "public_key_from_private"]

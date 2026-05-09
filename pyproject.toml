@@ -29,10 +29,14 @@ server = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
 ]
+crypto = [
+    "cryptography>=42",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
+    "cryptography>=42",
 ]
 
 [project.urls]

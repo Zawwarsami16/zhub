@@ -94,12 +94,41 @@ class Hub:
         publisher with the same name, this is a re-registration after a hub
         restart — keep the same name + same api_key. Otherwise allocate a
         fresh name + api_key.
+
+        Signed manifests: if `manifest` carries a `signature` + `public_key`,
+        the signature is verified before accepting the registration. On
+        re-registration with `desired_api_key`, the supplied public_key must
+        also match the stored manifest's public_key (key pinning — prevents
+        takeover via stolen api_key alone). Unsigned manifests still accepted
+        for backwards compatibility with v0 clients.
         """
+        # Signature verification (if manifest is signed)
+        if manifest.get("signature"):
+            try:
+                from .signing import verify_manifest as _verify
+            except SystemExit:
+                raise PermissionError(
+                    "manifest carries a signature but hub lacks 'cryptography'; "
+                    "install zhub with [crypto] extras"
+                )
+            if not _verify(manifest):
+                raise PermissionError("manifest signature verification failed")
+
         async with self.lock:
             # Re-registration path (after hub restart / publisher restart)
             if desired_api_key and self.storage:
                 stored = self.storage.lookup_publisher(name)
                 if stored and stored["api_key_hash"] == hash_key(desired_api_key):
+                    # Key pinning: if the stored manifest was signed, the
+                    # incoming manifest must present the same public_key
+                    # (otherwise a stolen api_key alone would let an attacker
+                    # take over the registration).
+                    stored_pk = stored["manifest"].get("public_key")
+                    if stored_pk:
+                        if manifest.get("public_key") != stored_pk:
+                            raise PermissionError(
+                                "key pinning: stored public_key does not match"
+                            )
                     api_key_hash = stored["api_key_hash"]
                     self.publishers[name] = PublisherRegistration(
                         name=name,
@@ -420,10 +449,16 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 if env.type == "register-publisher" and ai_name is None:
                     desired = env.payload.get("desired_name") or env.payload.get("manifest", {}).get("name", "ai")
                     desired_key = env.payload.get("api_key")  # for re-registration
-                    name, api_key = await hub.register_publisher(
-                        desired, env.payload.get("manifest", {}), websocket,
-                        desired_api_key=desired_key,
-                    )
+                    try:
+                        name, api_key = await hub.register_publisher(
+                            desired, env.payload.get("manifest", {}), websocket,
+                            desired_api_key=desired_key,
+                        )
+                    except PermissionError as e:
+                        await websocket.send_text(
+                            error_envelope(env.request_id, "register_failed", str(e)).to_json()
+                        )
+                        break
                     ai_name = name
                     base_url = "/" + name
                     await websocket.send_text(registered(name, base_url, api_key).to_json())
