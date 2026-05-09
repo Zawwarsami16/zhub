@@ -39,6 +39,9 @@ dev = [
     "cryptography>=42",
     "httpx>=0.27",
 ]
+brains = [
+    "httpx>=0.27",
+]
 
 [project.urls]
 Homepage = "https://github.com/Zawwarsami16/zhub"
