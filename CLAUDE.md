@@ -75,8 +75,12 @@ Tests: `pytest -v`. The e2e tests spin up the hub in-process and run the full pu
 - **Phase 1.7** ✅ — Sliding-window rate limiting per api_key. Configured via `manifest.rate_limit` (defaults `"60/min"`). 429 + `Retry-After` header on breach. `zhub.ratelimit.parse_rate` + `SlidingWindow`.
 - **Phase 1.8** ✅ — OpenAI tool calls end-to-end. Publisher emits `tool_calls`, hub matches each by name to a connected client's capability, invokes via existing invoke-request envelope, appends `role:tool` message, re-asks publisher. Bounded recursion (4). `usage.tool_results` audit log. Opt-out per request with `X-Zhub-Tool-Resolve: client`. Invoke envelope unwrapped before feed-back.
 - **Phase 1.9** ✅ — Auto-injection of connected capabilities as OpenAI `tools` in the chat-request. Caller-supplied tools merge with hub-injected; caller wins on name collision. `Hub.build_tools_for(ai_name, caller_tools)` is the single source.
+- **Phase 1.1b** ✅ — Cross-hub WebSocket routing for connect()-side clients. Hub A transparently tunnels `/ws/connect` to a peer hub if the AI lives there. Loop prevention via `via` chain in register-connection payload. `_tunnel_ws_connect` does the bidirectional pump.
+- **Phase 1.8b** ✅ — Parallel tool-call resolution via `asyncio.gather`. Multiple `tool_calls` in one chat-response now finish in `max(latency)` rather than `sum(latency)`.
+- **Phase 2.0a** ✅ — Hub observability: `GET /metrics` returns JSON snapshot with `hub_id`, uptime, publishers count, connections count, and `by_ai` per-AI counters (chat_requests, rate_limited, peer_proxied, tool_calls_resolved). `Hub.bump(ai, key)` is the single increment surface.
+- **JS demos** ✅ — `js/examples/publish.mjs` + `js/examples/connect.mjs` runnable Node demos against a Python hub. Cross-language interop proven end-to-end.
 
-**Next (not started):** cross-hub WebSocket routing (Phase 1.1b — connect()-side client to a federated AI), tool streaming via SSE (Phase 1.8c), parallel tool calls (1.8b), multi-tier API keys, real ZAI integration via `zai_publish.py`.
+**Next (not started):** tool streaming via SSE (Phase 1.8c), multi-tier API keys, real ZAI integration via `zai_publish.py`, JSON-Schema validation of tool args before invoke.
 
 ## 6. File layout (what's where)
 
@@ -167,4 +171,4 @@ docker run -p 8080:8080 zhub
 
 ---
 
-**Last updated:** 2026-05-09 (Phases 1.7 / 1.2 / 1.1 / 1.8 / 1.9 shipped autonomously in one continuous run. 56/56 pytest + 13/13 node:test passing, all CI runs green. Spec at `docs/superpowers/specs/2026-05-09-zhub-phase-1.7-1.2-1.1-1.8-design.md`. Phase 1.9 was an extension after the spec — capability auto-injection so the LLM sees runtime tools without operator plumbing.)
+**Last updated:** 2026-05-09 (Phases 1.7 / 1.2 / 1.1 / 1.1b / 1.8 / 1.8b / 1.9 / 2.0a shipped autonomously in one continuous run. 61/61 pytest + 13/13 node:test passing, all CI runs green. Spec at `docs/superpowers/specs/2026-05-09-zhub-phase-1.7-1.2-1.1-1.8-design.md`. Post-spec extensions: 1.1b cross-hub WS routing, 1.8b parallel tool calls, 1.9 capability auto-injection, 2.0a hub observability, runnable JS examples. One regression squashed: a duplicated init block inside `Hub.bump` was wiping `_rate_windows` on every counter increment — caught only when metrics tests went red on a `2/min` publisher. Sticking the metrics-counter init in the right block fixed it; lesson: when extending a hot dataclass, locate dependencies before splatting new fields.)
