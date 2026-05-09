@@ -79,8 +79,11 @@ Tests: `pytest -v`. The e2e tests spin up the hub in-process and run the full pu
 - **Phase 1.8b** ✅ — Parallel tool-call resolution via `asyncio.gather`. Multiple `tool_calls` in one chat-response now finish in `max(latency)` rather than `sum(latency)`.
 - **Phase 2.0a** ✅ — Hub observability: `GET /metrics` returns JSON snapshot with `hub_id`, uptime, publishers count, connections count, and `by_ai` per-AI counters (chat_requests, rate_limited, peer_proxied, tool_calls_resolved). `Hub.bump(ai, key)` is the single increment surface.
 - **JS demos** ✅ — `js/examples/publish.mjs` + `js/examples/connect.mjs` runnable Node demos against a Python hub. Cross-language interop proven end-to-end.
+- **Phase 2.1** ✅ — `zhub.mcp_server` exposes any zhub-published AI as an MCP stdio server. Drop-in for Claude Desktop / Cursor / Cline. Implements initialize / tools/list / tools/call. One tool `chat` per server. Closes the loop with the existing `examples/mcp_bridge.py`.
+- **Phase 2.2** ✅ — JSON-Schema validation of tool args before invoke. Tight subset (type/required/properties/items) at `zhub/validate.py`, no new deps. Bad args → validation error fed back to LLM as tool_result; capability handler is never invoked with garbage.
+- **federation_demo** ✅ — runnable `examples/federation_demo.py` spins up two hubs in-process, peers A→B, exercises 1.0b/1.1/1.1b in sequence.
 
-**Next (not started):** tool streaming via SSE (Phase 1.8c), multi-tier API keys, real ZAI integration via `zai_publish.py`, JSON-Schema validation of tool args before invoke.
+**Next (not started):** tool streaming via SSE (Phase 1.8c — would need to detect tool_calls during stream and pause), multi-tier API keys, real ZAI integration via `zai_publish.py`, exposing AI's connected capabilities as separate MCP tools (so Claude Desktop can call `send_whatsapp` directly).
 
 ## 6. File layout (what's where)
 
