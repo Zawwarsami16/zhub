@@ -221,7 +221,19 @@ Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_conf
 }
 ```
 
-Restart Claude Desktop and the AI shows up as a tool named `chat`. Same setup works for Cursor, Cline, and any other MCP host.
+Restart Claude Desktop and the AI shows up as a tool named `chat`. **Plus every capability the AI's connected clients expose** — `get_battery`, `send_whatsapp`, anything Loki or another client `connect()`s with — surfaces as its own MCP tool, callable directly from Claude. Same setup works for Cursor, Cline, and any other MCP host.
+
+For scripts that want to invoke a connected capability without going through chat, the hub also exposes a direct HTTP endpoint:
+
+```bash
+curl -X POST https://hub.example.com/<ai>/v1/invoke \
+  -H "Authorization: Bearer zk_..." \
+  -H "Content-Type: application/json" \
+  -d '{"capability": "get_battery", "args": {}}'
+# → {"ok": true, "result": {"level": 78, "charging": false}, "connection_id": "cx_..."}
+```
+
+The hub validates `args` against the capability's declared JSON schema before routing the call.
 
 ---
 
@@ -291,15 +303,20 @@ Shipped:
 - **1.0** — Signed manifests (ed25519) with key pinning, read-only federation (`/registry/global`).
 - **1.1** — Cross-hub call routing: hub A proxies a chat to hub B if B has the AI; loop prevention via `X-Zhub-Forwarded-By`.
 - **1.2** — JS/TS client (`@zawwarsami/zhub`): publish/connect with auto-reconnect, bidirectional invoke.
+- **1.1b** — Cross-hub WebSocket routing. A connect()-side client opens its WS at any hub; if the AI lives on a peer, the hub transparently tunnels.
 - **1.7** — Sliding-window rate limiting per api_key, configured by `manifest.rate_limit` (`"60/min"`, `"10/s"`, …).
-- **1.8** — OpenAI tool calls end-to-end: hub auto-invokes connected-client capabilities matching `tool_calls`, feeds results back as `role:tool` messages, returns final text. Audit log in `usage.tool_results`. Opt out per request with `X-Zhub-Tool-Resolve: client`.
+- **1.8** — OpenAI tool calls end-to-end: hub auto-invokes connected-client capabilities matching `tool_calls`, feeds results back as `role:tool` messages, returns final text. Audit log in `usage.tool_results`. Opt out per request with `X-Zhub-Tool-Resolve: client`. Parallel resolution via `asyncio.gather`.
 - **1.9** — Auto-injection of connected-client capabilities into the chat-request as OpenAI tools, so the LLM sees runtime tools without operator plumbing.
+- **2.0** — `GET /metrics` JSON snapshot: per-AI counters for chat, rate-limited, peer-proxied, tool-resolved, http-invoke.
+- **2.1** — `python -m zhub.mcp_server` exposes any zhub AI to Claude Desktop / Cursor / Cline as an MCP server.
+- **2.2** — Tool-call args validated against the capability's JSON schema before invoke (no new deps).
+- **2.3** — Direct `POST /<ai>/v1/invoke` HTTP endpoint + connected capabilities surface as first-class MCP tools (not just `chat`).
 
 Next:
 
-- WebSocket connections to federated AIs (cross-hub WS routing — Phase 1.1b).
+- Tool streaming via SSE (chunked tool_calls).
 - Multi-tier API keys + per-tier rate limits.
-- Tool streaming (chunked tool_calls via SSE) and parallel tool calls.
+- Real ZAI integration via `examples/zai_publish.py`.
 
 ---
 
