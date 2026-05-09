@@ -118,6 +118,7 @@ def publish(
     on_connection_event: Optional[ConnectionEventHandler] = None,
     api_key: Optional[str] = None,
     private_key: Optional[str] = None,
+    rate_limit: str = "60/min",
 ) -> ZhubPublication:
     """Create a ZhubPublication. Call .run_forever() to actually start serving.
 
@@ -134,6 +135,7 @@ def publish(
     manifest = chat_only_manifest(
         name=name, description=description,
         operator=operator, contact=contact, public=public,
+        rate_limit=rate_limit,
     )
     if capabilities:
         manifest.capabilities.extend(capabilities)

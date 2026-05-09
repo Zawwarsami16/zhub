@@ -87,12 +87,14 @@ def chat_only_manifest(
     operator: str = "",
     contact: str = "",
     public: bool = False,
+    rate_limit: str = "60/min",
 ) -> Manifest:
     """The simplest possible manifest — an AI that only does chat."""
     return Manifest(
         name=name,
         description=description,
         accepts="openai-v1-chat-completions",
+        rate_limit=rate_limit,
         capabilities=[
             Capability(
                 name="chat",

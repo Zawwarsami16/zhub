@@ -39,6 +39,7 @@ except ImportError as e:
     ) from e
 
 from .persistence import Storage, hash_key
+from .ratelimit import parse_rate, SlidingWindow
 from .protocol import (
     Envelope, registered, chat_request, chat_response,
     invoke_request, invoke_result, connection_event, error_envelope, new_request_id,
@@ -83,6 +84,22 @@ class Hub:
         # ws_connect-side chat-requests. Publisher emits chat-chunk back; we
         # route by request_id to the originating client.
         self.client_routes: dict[str, tuple[WebSocket, str]] = {}
+        # Rate-limit windows per AI. Each AI gets its own SlidingWindow
+        # configured from the publisher's manifest.rate_limit. Key into the
+        # window is the api_key string used by the caller.
+        self._rate_windows: dict[str, SlidingWindow] = {}
+
+    def check_rate_limit(self, ai_name: str, api_key: str) -> tuple[bool, Optional[float]]:
+        """Returns (allowed, retry_after_seconds_or_None)."""
+        window = self._rate_windows.get(ai_name)
+        if window is None:
+            publisher = self.publishers.get(ai_name)
+            if publisher is None:
+                return True, None  # AI offline; chat will 404 later
+            limit, period = parse_rate(publisher.manifest.get("rate_limit"))
+            window = SlidingWindow(limit=limit, period_seconds=period)
+            self._rate_windows[ai_name] = window
+        return window.check(api_key)
 
     # publishers --------------------------------------------------------
 
@@ -378,6 +395,22 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         api_key_header = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
         if hub.lookup_by_api_key(api_key_header) != ai_name:
             raise HTTPException(401, "invalid api key for this AI")
+
+        # Rate-limit enforcement (Phase 1.7)
+        rl_ok, retry_after = hub.check_rate_limit(ai_name, api_key_header)
+        if not rl_ok:
+            ra = max(1, int(round(retry_after or 1.0)))
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": {
+                        "code": "rate_limited",
+                        "message": "rate limit exceeded for this api key",
+                        "retry_after": ra,
+                    },
+                },
+                headers={"Retry-After": str(ra)},
+            )
 
         messages = body.get("messages", [])
         model = body.get("model", "default")
