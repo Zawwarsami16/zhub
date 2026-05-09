@@ -241,18 +241,59 @@ class Hub:
 
     # routing -----------------------------------------------------------
 
+    def build_tools_for(self, ai_name: str,
+                         caller_tools: Optional[list[dict[str, Any]]] = None,
+                         ) -> list[dict[str, Any]]:
+        """Compose an OpenAI-style `tools` array for an AI's chat-request.
+
+        Each connected client's capabilities are turned into one
+        function-tool entry. Caller-supplied tools win on name collisions
+        (caller is closest to the user's intent)."""
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for tool in caller_tools or []:
+            name = (tool.get("function") or {}).get("name", "") if isinstance(tool, dict) else ""
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(tool)
+        for conn in self.connections_by_ai.get(ai_name, {}).values():
+            for cap in conn.client_manifest.get("capabilities", []) or []:
+                cap_name = cap.get("name", "")
+                if not cap_name or cap_name in seen:
+                    continue
+                seen.add(cap_name)
+                out.append({
+                    "type": "function",
+                    "function": {
+                        "name": cap_name,
+                        "description": cap.get("description", "") or "",
+                        "parameters": cap.get("schema") or {"type": "object"},
+                    },
+                })
+        return out
+
     async def proxy_chat(self, ai_name: str, messages: list[dict[str, Any]],
                          model: str, temperature: float, max_tokens: int,
                          timeout: float = 60.0,
-                         stream: bool = False) -> dict[str, Any]:
+                         stream: bool = False,
+                         tools: Optional[list[dict[str, Any]]] = None,
+                         tool_choice: Optional[Any] = None) -> dict[str, Any]:
         """Route an HTTP chat request to the publisher and await its response.
         If stream=True the future delivers a queue of streaming chunks instead."""
         publisher = self.publishers.get(ai_name)
         if publisher is None:
             raise LookupError("publisher not registered")
+        extras: dict[str, Any] = {}
+        if stream:
+            extras["stream"] = True
+        if tools:
+            extras["tools"] = tools
+        if tool_choice is not None:
+            extras["tool_choice"] = tool_choice
         env = chat_request(messages=messages, model=model,
                            temperature=temperature, max_tokens=max_tokens,
-                           extras={"stream": True} if stream else None)
+                           extras=extras or None)
         if stream:
             queue: asyncio.Queue = asyncio.Queue()
             publisher.pending[env.request_id] = queue  # type: ignore[assignment]
@@ -528,11 +569,15 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         temperature = float(body.get("temperature", 0.4))
         max_tokens = int(body.get("max_tokens", 4096))
         stream = bool(body.get("stream", False))
+        caller_tools = body.get("tools") if isinstance(body.get("tools"), list) else None
+        merged_tools = hub.build_tools_for(ai_name, caller_tools)
+        tool_choice = body.get("tool_choice")
 
         if stream:
             try:
                 response = await hub.proxy_chat(
                     ai_name, messages, model, temperature, max_tokens, stream=True,
+                    tools=merged_tools or None, tool_choice=tool_choice,
                 )
             except LookupError:
                 raise HTTPException(404, "AI offline")
@@ -599,6 +644,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             try:
                 response = await hub.proxy_chat(
                     ai_name, running_messages, model, temperature, max_tokens,
+                    tools=merged_tools or None, tool_choice=tool_choice,
                 )
             except LookupError:
                 raise HTTPException(404, "AI offline")
