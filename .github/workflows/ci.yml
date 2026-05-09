@@ -27,7 +27,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[server,dev]'
+          pip install -e '.[server,dev,crypto]'
 
       - name: Lint (warnings only)
         continue-on-error: true
@@ -37,3 +37,24 @@ jobs:
       - name: Test
         run: |
           pytest -v
+
+  kotlin-test:
+    name: Kotlin module test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build + test kotlin module
+        working-directory: kotlin
+        run: |
+          gradle test build --no-daemon --stacktrace
