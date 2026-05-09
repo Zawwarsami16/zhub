@@ -96,6 +96,8 @@ Tests: `pytest -v`. The e2e tests spin up the hub in-process and run the full pu
 | ed25519 signing | `zhub/signing.py` |
 | Federation | `zhub/federation.py` |
 | Rate limiting | `zhub/ratelimit.py` |
+| MCP — wrap an MCP server as a zhub publisher | `zhub/mcp.py` (client) + `examples/mcp_bridge.py` |
+| MCP — expose a zhub AI as an MCP server | `zhub/mcp_server.py` (CLI: `python -m zhub.mcp_server --hub URL --ai NAME --key zk_...`) |
 | Custom exceptions | `zhub/errors.py` |
 | Kotlin client (Loki/JVM) | `kotlin/src/main/kotlin/com/zawwar/zhub/{Manifest,Protocol,Connection,loki/LokiZhubBridge}.kt` |
 | JS/TS client | `js/src/{manifest,protocol,errors,client,index}.ts` — `npm test` runs `node:test` against compiled output |

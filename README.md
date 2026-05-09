@@ -196,6 +196,35 @@ The wire protocol is plain JSON over WebSocket. See [`zhub/protocol.py`](zhub/pr
 
 ---
 
+## Plug a zhub AI into Claude Desktop / Cursor / any MCP client
+
+Any zhub-published AI can be exposed as an MCP server, so MCP-aware clients can call it as a tool. Two directions are supported:
+
+- **`zhub.mcp_server`** — wraps a remote zhub AI as an MCP server you point Claude Desktop at.
+- **`examples/mcp_bridge.py`** — wraps an existing MCP server as a zhub publisher.
+
+Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "my-zhub-ai": {
+      "command": "python",
+      "args": [
+        "-m", "zhub.mcp_server",
+        "--hub", "https://hub.example.com",
+        "--ai", "zai",
+        "--key", "zk_xxxxxxxxxxxxxxxxx"
+      ]
+    }
+  }
+}
+```
+
+Restart Claude Desktop and the AI shows up as a tool named `chat`. Same setup works for Cursor, Cline, and any other MCP host.
+
+---
+
 ## Manifest format (v0.1)
 
 When an AI registers, it publishes a manifest like:
