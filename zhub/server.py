@@ -40,6 +40,7 @@ except ImportError as e:
 
 from .persistence import Storage, hash_key
 from .ratelimit import parse_rate, SlidingWindow
+from .validate import validate as validate_schema
 from .protocol import (
     Envelope, registered, chat_request, chat_response,
     invoke_request, invoke_result, connection_event, error_envelope, new_request_id,
@@ -208,6 +209,15 @@ class Hub:
             for cap in conn.client_manifest.get("capabilities", []):
                 if cap.get("name") == capability_name:
                     return cid
+        return None
+
+    def find_capability_schema(self, ai_name: str, capability_name: str) -> Optional[dict[str, Any]]:
+        """Return the JSON-schema declared for a connected capability, or None."""
+        for conn in self.connections_by_ai.get(ai_name, {}).values():
+            for cap in conn.client_manifest.get("capabilities", []):
+                if cap.get("name") == capability_name:
+                    schema = cap.get("schema")
+                    return schema if isinstance(schema, dict) else None
         return None
 
     # connections -------------------------------------------------------
@@ -780,6 +790,16 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 if conn_id is None:
                     tool_result: Any = {"error": f"capability '{cap_name}' not connected"}
                 else:
+                    schema = hub.find_capability_schema(ai_name, cap_name)
+                    val_errors = validate_schema(args, schema) if schema else []
+                    if val_errors:
+                        tool_result = {"error": "validation failed: " + "; ".join(val_errors)}
+                        return {
+                            "tool_call_id": tc.get("id") if isinstance(tc, dict) else None,
+                            "name": cap_name,
+                            "args": args,
+                            "result": tool_result,
+                        }
                     try:
                         relayed = await hub.invoke_capability(
                             ai_name, conn_id, cap_name, args,
