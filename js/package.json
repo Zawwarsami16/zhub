@@ -26,8 +26,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "tsc -p tsconfig.test.json && node --test 'dist-test/**/*.test.js'"
   },
   "dependencies": {
     "ws": "^8.18.0"
@@ -35,8 +34,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/ws": "^8.5.10",
-    "typescript": "^5.4.0",
-    "vitest": "^2.1.9"
+    "typescript": "^5.4.0"
   },
   "engines": {
     "node": ">=18"
