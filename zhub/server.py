@@ -30,6 +30,7 @@ from typing import Any, Optional
 
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+    from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse, StreamingResponse
     import uvicorn
 except ImportError as e:
@@ -358,6 +359,51 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     storage = Storage(db_path) if db_path else None
     hub = Hub(storage=storage)
     app = FastAPI(title="zhub", version="0.1.0")
+
+    # Open CORS so browser-only OpenAI-compatible clients (Pocket, custom
+    # web UIs, etc.) can hit the chat endpoint without a same-origin proxy.
+    # Auth still happens via Bearer key — CORS only governs which origin
+    # the browser will let the response back to.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Zhub-Origin", "X-Zhub-Forwarded-By", "Retry-After"],
+    )
+
+    def _model_entry(name: str, manifest: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": name,
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": manifest.get("operator") or "zhub",
+        }
+
+    @app.get("/v1/models")
+    async def hub_models() -> JSONResponse:
+        """OpenAI-compat model list. Many BYOK clients (Pocket, openai-py,
+        etc.) call this on save to verify the provider. We list every
+        currently-registered publisher as one model, so a single base URL
+        of `<hub>/v1` works as a multi-AI provider."""
+        data = [
+            _model_entry(name, p.manifest)
+            for name, p in hub.publishers.items()
+        ]
+        return JSONResponse({"object": "list", "data": data})
+
+    @app.get("/{ai_name}/v1/models")
+    async def ai_models(ai_name: str) -> JSONResponse:
+        """Per-AI model list (used when the client's base URL is
+        `<hub>/<ai>/v1`). Returns a single entry — that AI."""
+        publisher = hub.publishers.get(ai_name)
+        if publisher is None:
+            raise HTTPException(404, f"AI '{ai_name}' not registered")
+        return JSONResponse({
+            "object": "list",
+            "data": [_model_entry(ai_name, publisher.manifest)],
+        })
 
     @app.get("/healthz")
     async def health() -> dict[str, str]:
