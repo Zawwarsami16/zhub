@@ -137,6 +137,12 @@ async def test_tool_call_auto_resolved(tool_hub_port):
         f"capability should have been invoked exactly once, got {invoke_counter['n']}"
     assert invoke_counter["args"] == {"to": "Ammi", "message": "ok"}
     assert call_counter["n"] == 2, "publisher should have been called twice"
+    # The hub records what tools it auto-resolved in the response usage block
+    audit = body.get("usage", {}).get("tool_results")
+    assert audit, f"expected usage.tool_results audit, got {body.get('usage')!r}"
+    assert audit[0]["name"] == "send_whatsapp"
+    assert audit[0]["args"] == {"to": "Ammi", "message": "ok"}
+    assert audit[0]["result"]["delivered"] is True
 
 
 @pytest.mark.asyncio

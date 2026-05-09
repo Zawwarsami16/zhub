@@ -640,6 +640,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         max_tool_iters = 4
         iters = 0
         running_messages = list(messages)
+        tool_audit: list[dict[str, Any]] = []
         while True:
             try:
                 response = await hub.proxy_chat(
@@ -674,14 +675,32 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                     tool_result = {"error": f"capability '{cap_name}' not connected"}
                 else:
                     try:
-                        tool_result = await hub.invoke_capability(
+                        relayed = await hub.invoke_capability(
                             ai_name, conn_id, cap_name, args,
                         )
+                        # invoke-result envelope wraps {ok, result, error};
+                        # unwrap so the LLM and audit see the actual return.
+                        if isinstance(relayed, dict) and "ok" in relayed:
+                            if relayed.get("ok"):
+                                tool_result = relayed.get("result")
+                                if tool_result is None:
+                                    tool_result = {"ok": True}
+                            else:
+                                tool_result = {"error": relayed.get("error") or "invoke failed"}
+                        else:
+                            tool_result = relayed
                     except Exception as e:
                         tool_result = {"error": str(e)}
+                tc_id = tc.get("id") if isinstance(tc, dict) else None
+                tool_audit.append({
+                    "tool_call_id": tc_id,
+                    "name": cap_name,
+                    "args": args,
+                    "result": tool_result,
+                })
                 running_messages.append({
                     "role": "tool",
-                    "tool_call_id": tc.get("id") if isinstance(tc, dict) else None,
+                    "tool_call_id": tc_id,
                     "name": cap_name,
                     "content": json.dumps(tool_result),
                 })
@@ -689,7 +708,9 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
 
         # Wrap into OpenAI-style response shape (non-streaming)
         text = response.get("text", "")
-        usage = response.get("usage", {})
+        usage = dict(response.get("usage") or {})
+        if tool_audit:
+            usage["tool_results"] = tool_audit
         message: dict[str, Any] = {"role": "assistant", "content": text or None}
         if tool_calls and tool_resolve_mode == "client":
             message["tool_calls"] = tool_calls
