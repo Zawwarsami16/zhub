@@ -80,6 +80,9 @@ class Hub:
         self.api_keys: dict[str, str] = {}  # api_key -> ai_name (for fast lookup)
         self.lock = asyncio.Lock()
         self.storage = storage
+        # Hub identity for cross-hub loop prevention. Stable per process; can
+        # be pinned via ZHUB_HUB_ID for deterministic forwarding chains.
+        self.hub_id = os.environ.get("ZHUB_HUB_ID") or "hub_" + secrets.token_urlsafe(6)
         # request_id -> (client_websocket, ai_name) for streaming relay from
         # ws_connect-side chat-requests. Publisher emits chat-chunk back; we
         # route by request_id to the originating client.
@@ -368,6 +371,84 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             return JSONResponse(local + peer_entries)
         return JSONResponse(local)
 
+    async def _find_peer_for(ai_name: str) -> Optional[str]:
+        """Look across configured peers; return the first peer URL whose
+        /registry lists ``ai_name``. Returns None if no peers know it."""
+        peers_env = os.environ.get("ZHUB_PEERS", "")
+        peers = [p.strip() for p in peers_env.split(",") if p.strip()]
+        if not peers:
+            return None
+        try:
+            import httpx
+        except ImportError:
+            return None
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for peer in peers:
+                try:
+                    resp = await client.get(peer.rstrip("/") + "/registry")
+                    if resp.status_code != 200:
+                        continue
+                    entries = resp.json()
+                    if not isinstance(entries, list):
+                        continue
+                    if any(e.get("name") == ai_name for e in entries):
+                        return peer
+                except Exception as e:
+                    log.warning("peer registry check failed for %s: %s", peer, e)
+        return None
+
+    async def _proxy_to_peer(peer_url: str, ai_name: str, body: dict[str, Any],
+                              api_key: str, forwarded_by_chain: list[str]):
+        """Forward chat-completions to a peer hub. Streams or single-shot
+        based on body['stream']. Returns Response with X-Zhub-Origin set."""
+        try:
+            import httpx
+        except ImportError:
+            raise HTTPException(500, "peer routing requires httpx")
+
+        target = peer_url.rstrip("/") + f"/{ai_name}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}" if api_key else "",
+            "X-Zhub-Forwarded-By": ",".join(forwarded_by_chain),
+            "Content-Type": "application/json",
+        }
+        is_stream = bool(body.get("stream"))
+        if is_stream:
+            client = httpx.AsyncClient(timeout=60.0)
+
+            async def upstream():
+                try:
+                    async with client.stream("POST", target, json=body, headers=headers) as resp:
+                        async for chunk in resp.aiter_bytes():
+                            yield chunk
+                finally:
+                    await client.aclose()
+
+            return StreamingResponse(
+                upstream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "X-Zhub-Origin": peer_url,
+                },
+            )
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                resp = await client.post(target, json=body, headers=headers)
+            except httpx.RequestError as e:
+                raise HTTPException(502, f"peer hub unreachable: {e}")
+        try:
+            content = resp.json()
+        except ValueError:
+            content = {"error": {"code": "bad_peer_response", "message": resp.text[:200]}}
+        return JSONResponse(
+            status_code=resp.status_code,
+            content=content,
+            headers={"X-Zhub-Origin": peer_url},
+        )
+
     @app.get("/{ai_name}/manifest.json")
     async def manifest(ai_name: str) -> JSONResponse:
         publisher = hub.publishers.get(ai_name)
@@ -393,6 +474,27 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     async def chat_completions(ai_name: str, request: Request):
         body = await request.json()
         api_key_header = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+
+        # Loop-prevention: refuse if our own hub_id already in the chain.
+        forwarded_by = request.headers.get("x-zhub-forwarded-by", "")
+        chain = [s.strip() for s in forwarded_by.split(",") if s.strip()]
+        if hub.hub_id in chain:
+            return JSONResponse(
+                status_code=508,
+                content={"error": {"code": "loop_detected",
+                                   "message": f"hub {hub.hub_id} already in forwarding chain"}},
+            )
+
+        # AI not registered locally → try peer routing before 401-ing on auth.
+        if ai_name not in hub.publishers:
+            peer_url = await _find_peer_for(ai_name)
+            if peer_url is None:
+                raise HTTPException(404, f"AI '{ai_name}' not found locally or in peers")
+            return await _proxy_to_peer(
+                peer_url, ai_name, body, api_key_header,
+                forwarded_by_chain=chain + [hub.hub_id],
+            )
+
         if hub.lookup_by_api_key(api_key_header) != ai_name:
             raise HTTPException(401, "invalid api key for this AI")
 
