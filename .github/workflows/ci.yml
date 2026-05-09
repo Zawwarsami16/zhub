@@ -70,12 +70,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: js/package-lock.json
 
-      - name: Install
+      - name: Clean install
         working-directory: js
-        run: npm install --no-audit --no-fund
+        # Lockfile was generated on Termux where rollup native binding
+        # is broken — `npm ci` may diverge in CI. Use a clean `npm install`
+        # without cache to get fresh, complete deps.
+        run: |
+          rm -f package-lock.json
+          npm install --no-audit --no-fund
 
       - name: Type check
         working-directory: js
