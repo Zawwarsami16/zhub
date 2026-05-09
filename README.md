@@ -1,5 +1,7 @@
 # zhub
 
+In Production
+
 > WiFi for AIs. A drop-in skill that lets any AI publish a discoverable, controllable endpoint — and stay aware of every client connected to it. Bidirectional from day one.
 
 ---
