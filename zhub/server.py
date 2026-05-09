@@ -630,6 +630,69 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         ]
         return JSONResponse(m)
 
+    @app.post("/{ai_name}/v1/invoke")
+    async def invoke_capability_http(ai_name: str, request: Request):
+        """Direct HTTP invocation of a connected client's capability.
+
+        Companion to the existing OpenAI chat endpoint. Lets external
+        callers (e.g. zhub.mcp_server) call any connected capability by
+        name without having to round-trip through chat → tool_call.
+        """
+        body = await request.json()
+        api_key_header = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if hub.lookup_by_api_key(api_key_header) != ai_name:
+            raise HTTPException(401, "invalid api key for this AI")
+
+        capability = body.get("capability") or ""
+        args = body.get("args") or {}
+        connection_id = body.get("connection_id")
+        if not capability:
+            raise HTTPException(400, "missing 'capability'")
+
+        if connection_id:
+            conn = hub.connections_by_ai.get(ai_name, {}).get(connection_id)
+            if conn is None:
+                raise HTTPException(404, f"connection '{connection_id}' not found")
+            schema = next(
+                (c.get("schema") for c in conn.client_manifest.get("capabilities", [])
+                 if c.get("name") == capability),
+                None,
+            )
+            if schema is None:
+                raise HTTPException(404,
+                    f"connection '{connection_id}' does not expose '{capability}'")
+        else:
+            connection_id = hub.find_capability_connection(ai_name, capability)
+            if connection_id is None:
+                raise HTTPException(404,
+                    f"capability '{capability}' not available on any connection")
+            schema = hub.find_capability_schema(ai_name, capability)
+
+        if isinstance(schema, dict):
+            errs = validate_schema(args, schema)
+            if errs:
+                raise HTTPException(400, "validation failed: " + "; ".join(errs))
+
+        try:
+            relayed = await hub.invoke_capability(ai_name, connection_id, capability, args)
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "capability did not respond in time")
+
+        if isinstance(relayed, dict) and "ok" in relayed:
+            if relayed.get("ok"):
+                result = relayed.get("result")
+            else:
+                return JSONResponse(
+                    status_code=502,
+                    content={"ok": False, "error": relayed.get("error") or "invoke failed"},
+                )
+        else:
+            result = relayed
+        hub.bump(ai_name, "http_invoke")
+        return JSONResponse({"ok": True, "result": result, "connection_id": connection_id})
+
     @app.post("/{ai_name}/v1/chat/completions")
     async def chat_completions(ai_name: str, request: Request):
         body = await request.json()

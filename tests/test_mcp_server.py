@@ -28,7 +28,7 @@ except ImportError:
 
 if DEPS_AVAILABLE:
     from zhub.server import create_app
-from zhub import publish
+from zhub import publish, connect
 
 
 def _free_port() -> int:
@@ -139,6 +139,79 @@ async def test_mcp_server_initialize_list_tools_call(mcp_hub_port):
         assert content[0]["type"] == "text"
         assert "saw user: hello" in content[0]["text"]
 
+    finally:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=3.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+
+
+@pytest.mark.asyncio
+async def test_mcp_server_exposes_connected_capabilities_as_tools(mcp_hub_port):
+    """When the AI has a connected client with a capability, tools/list
+    surfaces that capability as its own MCP tool (alongside `chat`).
+    tools/call <cap> hits the connected client's handler via /v1/invoke."""
+    hub_ws = f"ws://127.0.0.1:{mcp_hub_port}"
+    hub_http = f"http://127.0.0.1:{mcp_hub_port}"
+    received = {}
+
+    pub = publish(
+        name="mcp-cap-bot",
+        description="cap discovery",
+        chat_handler=lambda m, o: "ok",
+        hub_url=hub_ws,
+    )
+    for _ in range(50):
+        if pub.api_key:
+            break
+        await asyncio.sleep(0.1)
+
+    def battery_handler(args):
+        received.update(args)
+        return {"level": 91, "charging": True}
+
+    conn = connect(
+        ai_name=pub.name,
+        api_key=pub.api_key,
+        hub_url=hub_ws,
+        capabilities={
+            "get_battery": (
+                {"type": "object", "properties": {"detailed": {"type": "boolean"}}},
+                battery_handler,
+            ),
+        },
+    )
+    await asyncio.sleep(0.6)
+
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "zhub.mcp_server",
+        "--hub", hub_http, "--ai", pub.name, "--key", pub.api_key,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    try:
+        await _send_recv(proc, "initialize", {
+            "protocolVersion": "2024-11-05", "capabilities": {},
+            "clientInfo": {"name": "pytest", "version": "0"},
+        }, req_id=1)
+
+        list_resp = await _send_recv(proc, "tools/list", {}, req_id=2)
+        names = [t["name"] for t in list_resp["result"]["tools"]]
+        assert "chat" in names
+        assert "get_battery" in names, f"capability missing from {names}"
+
+        call_resp = await _send_recv(proc, "tools/call", {
+            "name": "get_battery", "arguments": {"detailed": True},
+        }, req_id=3)
+        text = call_resp["result"]["content"][0]["text"]
+        assert "level" in text and "91" in text, f"unexpected result text: {text!r}"
+        assert received == {"detailed": True}
     finally:
         proc.terminate()
         try:

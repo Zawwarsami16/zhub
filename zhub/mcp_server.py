@@ -65,6 +65,8 @@ class ZhubMCPServer:
         self.timeout = timeout
         self._http: Optional[httpx.AsyncClient] = None
         self._initialized = False
+        # cap_name → connection_id, refreshed on each tools/list
+        self._cap_index: dict[str, str] = {}
 
     async def start(self) -> None:
         self._http = httpx.AsyncClient(timeout=self.timeout)
@@ -73,8 +75,36 @@ class ZhubMCPServer:
         if self._http:
             await self._http.aclose()
 
-    def tools(self) -> list[dict[str, Any]]:
-        return [{
+    async def _discover_capabilities(self) -> list[dict[str, Any]]:
+        """Fetch the AI's manifest and turn connected client capabilities
+        into MCP tool entries. Returns [] if the AI is offline or no
+        connections are present — `chat` is always exposed independently."""
+        assert self._http is not None
+        try:
+            resp = await self._http.get(f"{self.hub}/{self.ai}/manifest.json")
+            if resp.status_code != 200:
+                return []
+            manifest = resp.json()
+        except Exception:
+            return []
+        tools: list[dict[str, Any]] = []
+        self._cap_index.clear()
+        for conn in manifest.get("connections") or []:
+            conn_id = conn.get("connection_id", "")
+            for cap in (conn.get("client_manifest") or {}).get("capabilities") or []:
+                name = cap.get("name") or ""
+                if not name or name in self._cap_index:
+                    continue
+                self._cap_index[name] = conn_id
+                tools.append({
+                    "name": name,
+                    "description": cap.get("description") or f"zhub capability {name}",
+                    "inputSchema": cap.get("schema") or {"type": "object"},
+                })
+        return tools
+
+    async def tools(self) -> list[dict[str, Any]]:
+        chat_tool = {
             "name": "chat",
             "description": (
                 f"Send a prompt to the zhub-published AI '{self.ai}' "
@@ -90,7 +120,27 @@ class ZhubMCPServer:
                 },
                 "required": ["prompt"],
             },
-        }]
+        }
+        cap_tools = await self._discover_capabilities()
+        # `chat` first, then capabilities, deduped (chat name is reserved)
+        return [chat_tool] + [t for t in cap_tools if t["name"] != "chat"]
+
+    async def call_capability(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Invoke a discovered capability via the hub's /v1/invoke endpoint."""
+        assert self._http is not None
+        resp = await self._http.post(
+            f"{self.hub}/{self.ai}/v1/invoke",
+            json={"capability": name, "args": arguments},
+            headers={"Authorization": f"Bearer {self.key}"},
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"invoke failed ({resp.status_code}): {resp.text[:200]}")
+        body = resp.json()
+        text_repr = json.dumps(body.get("result"), indent=2, ensure_ascii=False)
+        return {
+            "content": [{"type": "text", "text": text_repr}],
+            "isError": False,
+        }
 
     async def call_chat(self, arguments: dict[str, Any]) -> dict[str, Any]:
         prompt = arguments.get("prompt")
@@ -128,16 +178,24 @@ class ZhubMCPServer:
             return None  # client tells us it's done; no response
 
         if method == "tools/list":
-            return _ok(req_id, {"tools": self.tools()})
+            return _ok(req_id, {"tools": await self.tools()})
 
         if method == "tools/call":
             name = params.get("name", "")
             arguments = params.get("arguments") or {}
-            if name != "chat":
-                return _err(req_id, JSONRPC_METHOD_NOT_FOUND,
-                            f"unknown tool: {name}")
             try:
-                result = await self.call_chat(arguments)
+                if name == "chat":
+                    result = await self.call_chat(arguments)
+                elif name in self._cap_index:
+                    result = await self.call_capability(name, arguments)
+                else:
+                    # cache could be stale; refresh once before giving up
+                    await self._discover_capabilities()
+                    if name in self._cap_index:
+                        result = await self.call_capability(name, arguments)
+                    else:
+                        return _err(req_id, JSONRPC_METHOD_NOT_FOUND,
+                                    f"unknown tool: {name}")
             except ValueError as e:
                 return _err(req_id, JSONRPC_INVALID_PARAMS, str(e))
             except Exception as e:
