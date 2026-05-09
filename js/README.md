@@ -58,6 +58,22 @@ console.log('AI replied:', reply.text);
 
 The library uses the global `WebSocket` when present (browsers) and falls back to `ws` in Node. Connect-mode is the primary browser use case. Publish-mode also works in browsers.
 
+## Runnable examples
+
+Two ready-to-run Node demos live in `examples/`. After `npm install && npm run build`:
+
+```bash
+# In one terminal — start a hub
+python -m zhub.server --port 8080
+
+# In another — publish an echo AI from Node
+node examples/publish.mjs
+# → prints URL + KEY
+
+# In a third — connect with a capability and drive a few chats
+ZHUB_AI_NAME=echo-js ZHUB_API_KEY=zk_... node examples/connect.mjs
+```
+
 ## API parity with Python
 
 Field names on the wire match Python's `zhub.protocol`. Both sides interoperate against the same hub.
