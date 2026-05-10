@@ -44,6 +44,12 @@ Today, exposing a custom AI (an agent, a fine-tuned local model, a custom RAG st
 
 > **Substrate, not opinion.** zhub knows nothing about your AI's identity, your devices, your business logic. It routes bytes, multiplexes WebSockets, validates schemas, resolves tool calls, federates across hubs. The thing on top is yours.
 
+### Origin
+
+I'm building a private autonomous AI (**ZAI**) that I want reachable from everywhere — phone chat ([Pocket](https://github.com/Zawwarsami16/pocket)), laptop dev tools (Claude Desktop, Cursor), custom surfaces — without writing the same auth/tunnel/SDK plumbing five times. zhub is the substrate I extracted from that need.
+
+ZAI itself stays private; what made it interesting to *build the connector right* is what's open source here. The same primitive works for any AI — yours, mine, a model someone hasn't trained yet. zhub doesn't care.
+
 ---
 
 ## Architecture
