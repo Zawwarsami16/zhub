@@ -65,10 +65,13 @@ async def main() -> None:
     parser.add_argument("--list", action="store_true",
                         help="list available brains and exit")
     parser.add_argument("--system", default=os.environ.get("ZHUB_SYSTEM", ""),
-                        help="server-side system prompt prepended to every "
-                             "chat (lets the brain know it lives behind zhub, "
-                             "what its name/persona is, etc). Clients don't "
-                             "have to send any context.")
+                        help="extra server-side system prompt prepended to "
+                             "every chat (on top of the zhub-aware default). "
+                             "Use this for persona / role / domain context.")
+    parser.add_argument("--no-zhub-context", action="store_true",
+                        help="don't auto-inject the default 'you are served "
+                             "via zhub' awareness preamble. Use if you want "
+                             "the brain to answer as if zhub didn't exist.")
     args = parser.parse_args()
 
     if args.list:
@@ -83,12 +86,30 @@ async def main() -> None:
     brain = _resolve_brain(args.brain)
     print(f"using brain: {brain.label}", flush=True)
 
+    # Zhub-aware preamble — auto-injected so the brain naturally knows
+    # it's part of the substrate, without the operator having to spell
+    # it out. Disable with --no-zhub-context when you want a "naked" brain.
+    zhub_preamble = (
+        f"You are an AI agent published via zhub — an open-source substrate "
+        f"that wraps any AI as a single OpenAI-compatible endpoint reachable "
+        f"from any client (Pocket, curl, PowerShell, Claude Desktop, Cursor, "
+        f"and anywhere else). You are running on the {brain.label} backend "
+        f"right now, but the substrate could swap that brain underneath "
+        f"without changing your URL or key. The hub operator can see live "
+        f"traffic and observability on a dashboard, and the same endpoint "
+        f"may be hit from multiple surfaces simultaneously. When asked about "
+        f"yourself, zhub, or what's powering you, answer naturally with "
+        f"this context — don't over-explain or sound like a marketing page."
+    )
+
     async def chat_handler(messages, options):
         # Fold any system messages into a single system prompt; keep the
-        # rest of the conversation intact. The publisher-level --system
-        # always wins position-wise (prepended), so server-side identity
-        # survives even if a client also sends a system message.
+        # rest of the conversation intact. Order: zhub preamble (unless
+        # disabled) → operator's --system → any system messages from the
+        # client. Position-wise, server-side identity wins.
         system_parts = []
+        if not args.no_zhub_context:
+            system_parts.append(zhub_preamble)
         if args.system:
             system_parts.append(args.system)
         system_parts += [m.get("content", "") for m in messages
