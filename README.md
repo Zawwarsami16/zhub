@@ -1,168 +1,48 @@
+<div align="center">
+
 # zhub
 
-In Production
+**WiFi for AIs.** Drop-in substrate that turns any AI into a discoverable, controllable, OpenAI-compatible endpoint — reachable from any client, on any machine, in three commands.
 
-> WiFi for AIs. A drop-in skill that lets any AI publish a discoverable, controllable endpoint — and stay aware of every client connected to it. Bidirectional from day one.
+[![CI](https://github.com/Zawwarsami16/zhub/actions/workflows/ci.yml/badge.svg)](https://github.com/Zawwarsami16/zhub/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-141%2F141-brightgreen)](#tests)
 
----
-
-## What this is
-
-Today, when you build a custom AI (an autonomous agent, a fine-tuned local model, an MCP server, anything), exposing it to the rest of the world means writing your own auth, your own tunnel, your own API gateway, your own client SDK. And once exposed, your AI has no idea who's connected to it or what those clients can do.
-
-`zhub` is a tiny library + a tiny hub server that fixes both halves at once:
-
-- **Publish mode** — the AI installs `zhub.publish(...)`, gets a public URL + API key, and is callable in standard OpenAI Chat Completions format. Anyone with the key can talk to it.
-- **Connect mode** — clients (your phone bridge, your Telegram bot, your web chat, another AI) install `zhub.connect(...)`, expose their own capabilities back to the AI, and let the AI orchestrate them.
-
-The result: **the AI is a hub, every client is a spoke, and every spoke is bidirectional.** Like WiFi pairing, but for AI agents.
+</div>
 
 ---
 
-## The 60-second demo
+## TL;DR
 
 ```bash
-# 1. start the hub somewhere (your laptop, a free Render/Fly tier, your NUC)
-python -m zhub.server --port 8080
-
-# 2. in another terminal, publish your AI
-python examples/publish_demo.py
-# prints:  URL: http://localhost:8080/echo
-#          KEY: zk_a8f2c9d3e1b4...
-
-# 3. anyone with the key can call it like OpenAI:
-curl http://localhost:8080/echo/v1/chat/completions \
-  -H "Authorization: Bearer zk_a8f2c9d3e1b4..." \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"hello"}]}'
+git clone https://github.com/Zawwarsami16/zhub && cd zhub
+pip install -e '.[server,brains]'
+GROQ_API_KEY=gsk_... python -m zhub up
 ```
 
-That covers the publish side. Now the bidirectional half:
+Output:
 
-```bash
-# 4. connect a client that exposes capabilities back to the AI
-AI_NAME=echo API_KEY=zk_... python examples/connect_demo.py
-# the client now exposes send_whatsapp, get_battery to the AI
-# the AI can invoke those capabilities through the hub
+```
+================================================================
+  brain:    Groq Llama 3.3 70B
+  URL:      https://random-words.trycloudflare.com/me/v1
+  KEY:      zk_BWOuFb8-Fiw8JpVjWO3hNwCaTfASE_To
+  paste both into Pocket / openai-py / curl / Claude Desktop
+================================================================
 ```
 
-Or run the all-in-one orchestration demo:
-
-```bash
-python examples/orchestrate_demo.py
-# >>> what connections do you have?
-# <<< I have 1 connection(s): echo-client
-# >>> tell me about my battery
-# <<< invoked get_battery: {'level': 78, 'charging': False}
-# >>> send a whatsapp to Ammi
-# <<< invoked send_whatsapp: {'ok': True, 'to': 'Ammi', 'delivered': True}
-```
-
-The AI saw a connection arrive, registered its capabilities, and invoked them at the user's request — all through the hub, in a single conversation.
-
-### Calling from the OpenAI Python library
-
-```python
-from openai import OpenAI
-
-# IMPORTANT: openai-py expects /v1 in the base_url.
-# Use ".../<name>/v1", not just ".../<name>".
-client = OpenAI(
-    base_url="http://localhost:8080/echo/v1",
-    api_key="zk_...",
-)
-client.chat.completions.create(model="echo", messages=[{"role":"user","content":"hi"}])
-# streaming works too:
-for chunk in client.chat.completions.create(
-    model="echo", messages=[...], stream=True,
-):
-    print(chunk.choices[0].delta.content or "", end="", flush=True)
-```
+Three commands. One URL + key. Reachable from anywhere.
 
 ---
 
-## Install
+## Why
 
-```bash
-pip install zhub                  # client library only
-pip install 'zhub[server]'        # also install the hub server
-```
+Today, exposing a custom AI (an agent, a fine-tuned local model, a custom RAG stack, an MCP server) to the rest of your tools means re-writing the same plumbing every time: auth, tunnel, API gateway, SDK, retries, MCP bridge, identity, federation.
 
-Or for development:
+`zhub` is the substrate that does all of that once. Whatever brain you have, plug it in. Whatever client you use (Pocket, Cursor, TypingMind, Continue, Claude Desktop, openai-py, curl), it just works — same OpenAI Chat Completions wire format.
 
-```bash
-git clone https://github.com/Zawwarsami16/zhub.git
-cd zhub
-pip install -e '.[server,dev]'
-pytest
-```
-
----
-
-## Library usage
-
-### Publishing an AI
-
-```python
-from zhub import publish
-
-def my_chat_handler(messages, options):
-    # messages: OpenAI-format conversation
-    # options: {model, temperature, max_tokens, ...}
-    last_user = next((m["content"] for m in reversed(messages)
-                      if m.get("role") == "user"), "")
-    return f"You said: {last_user}"
-
-pub = publish(
-    name="my-ai",
-    description="A simple example AI",
-    chat_handler=my_chat_handler,
-    hub_url="ws://localhost:8080",
-    public=True,             # appears in /registry
-    operator="me",
-)
-
-# Once registered, pub.api_key is the bearer token,
-# pub.base_url is the URL prefix on the hub.
-print(pub.name, pub.api_key, pub.base_url)
-```
-
-`pub.list_connections()` returns the currently-connected clients. `pub.find_capability("name")` returns the connection_id of any client offering a given capability. `pub.invoke(connection_id, capability, args)` calls back to that capability through the hub.
-
-### Connecting a client + exposing capabilities
-
-```python
-from zhub import connect
-
-def send_whatsapp(args):
-    # args validated against the schema below
-    return {"delivered": True, "to": args.get("to")}
-
-conn = connect(
-    ai_name="my-ai",
-    api_key="zk_...",
-    hub_url="ws://localhost:8080",
-    capabilities={
-        "send_whatsapp": (
-            {
-                "type": "object",
-                "required": ["to", "message"],
-                "properties": {
-                    "to": {"type": "string"},
-                    "message": {"type": "string"},
-                },
-            },
-            send_whatsapp,
-        ),
-    },
-)
-
-# To send a chat to the AI from the client:
-resp = await conn.chat(messages=[{"role": "user", "content": "hi"}])
-print(resp["text"])
-
-# The AI can now invoke conn's send_whatsapp through the hub.
-```
+> **Substrate, not opinion.** zhub knows nothing about your AI's identity, your devices, your business logic. It routes bytes, multiplexes WebSockets, validates schemas, resolves tool calls, federates across hubs. The thing on top is yours.
 
 ---
 
@@ -174,18 +54,20 @@ flowchart TB
     classDef hub fill:#0f3460,color:#e5e7eb,stroke:#3b82f6
     classDef pub fill:#064e3b,color:#e5e7eb,stroke:#10b981
     classDef cli fill:#581c87,color:#e5e7eb,stroke:#a855f7
+    classDef dev fill:#7c2d12,color:#e5e7eb,stroke:#f97316
 
-    Pocket[browser BYOK<br/>e.g. Pocket]:::ext
-    OpenAIPy[openai-py / curl<br/>any HTTP client]:::ext
+    Pocket[browser BYOK<br/>Pocket / TypingMind /<br/>OpenWebUI / Chatbox]:::ext
+    OpenAIPy[openai-py / curl /<br/>any HTTP client]:::ext
     Claude[Claude Desktop /<br/>Cursor / Cline<br/>via MCP]:::ext
 
     Hub((zhub hub<br/>FastAPI + WS<br/>SQLite persistence)):::hub
 
-    Pub1[publisher<br/>publish&#40;name, brain, ...&#41;]:::pub
-    Pub2[publisher<br/>another AI]:::pub
+    Pub1[publisher<br/>your brain<br/>zhub.publish&#40;...&#41;]:::pub
+    Pub2[publisher<br/>another brain]:::pub
 
-    Conn1[connection<br/>connect&#40;ai, key, capabilities&#41;]:::cli
-    Conn2[connection<br/>another device]:::cli
+    Conn1[connection<br/>paired client<br/>zhub.connect&#40;...&#41;]:::cli
+
+    Exp1[exposure<br/>untethered device<br/>zhub.expose&#40;...&#41;]:::dev
 
     Pocket -- HTTPS Bearer<br/>POST /v1/chat/completions --> Hub
     OpenAIPy -- HTTPS Bearer --> Hub
@@ -195,165 +77,280 @@ flowchart TB
     Hub <-- WS --> Pub2
 
     Hub <-- WS<br/>chat-request<br/>invoke-request --> Conn1
-    Hub <-- WS --> Conn2
+
+    Hub <-- WS<br/>invoke-request --> Exp1
 
     Hub -. peer routing .- Hub2((peer hub)):::hub
 ```
 
-The hub is a router. State (publisher registry, in-flight requests, rate-limit windows, metrics, entity extensions) lives in the hub process; persistence is SQLite. Publishers and connections each hold one long-lived WebSocket. Federation: hubs peer each other and proxy chat completions / WS register-connection for AIs hosted elsewhere.
-
-- The hub holds a registry of every published AI and every connection to it.
-- Publishers receive `connection-event` messages whenever a client connects, disconnects, or updates its capabilities.
-- Clients receive `invoke-request` messages when the AI wants to call a capability.
-
-The wire protocol is plain JSON over WebSocket. See [`zhub/protocol.py`](zhub/protocol.py) for the full envelope schema.
+The hub is a router. State (publisher registry, in-flight requests, rate-limit windows, metrics, entity extensions) lives in the hub process; persistence is SQLite. **Publishers** hold the brain. **Connections** are clients paired to one specific publisher. **Exposures** are devices anyone on the hub can use. Federation: hubs peer each other and proxy chat / WS for AIs hosted elsewhere.
 
 ---
 
-## Plug a zhub AI into Claude Desktop / Cursor / any MCP client
+## What you get out of the box
 
-Any zhub-published AI can be exposed as an MCP server, so MCP-aware clients can call it as a tool. Two directions are supported:
+| Primitive | What it gives you |
+|---|---|
+| **`publish()`** | Turn any chat handler into an OpenAI-compat HTTPS endpoint. Auto-tunneled. `zk_` API key. Persistence-stable across restarts. |
+| **`connect()`** | Pair a client to one specific AI. Expose capabilities back; the AI sees them as connected tools and can invoke them. |
+| **`expose()`** *(Phase 7.0)* | Device registers capabilities once, **untethered to any AI**. Any AI on the hub can use them via `POST /exposures/<id>/invoke`. |
+| **5 brain adapters** | Ollama, Groq, OpenAI, Cerebras, Anthropic — drop-in, streaming-first. Swap brain with a flag, key stays the same. |
+| **MCP, both directions** | Wrap a zhub AI as an MCP server (`python -m zhub.mcp_server`) for Claude Desktop. Wrap an MCP server as a zhub publisher (`examples/mcp_bridge.py`). |
+| **Tool calls** | OpenAI `tool_calls` auto-resolved against connected capabilities + exposures. Parallel resolution. JSON-Schema arg validation. Audit log in `usage.tool_results`. |
+| **Federation** | Multiple hubs peer each other. Cross-hub HTTP chat + cross-hub WebSocket connect, transparent to the client. |
+| **Self-knowledge layer** | `GET /entity` ships zhub's own routes/errors/patterns/install/up/paths recipes. Operators extend per-deployment via `POST /entity/extend`. Any AI installing zhub becomes fluent in one fetch. |
+| **CLI** | `python -m zhub up` (one-shot bring-up), `python -m zhub doctor` (env diagnostic), `python -m zhub.server` (just the hub). |
+| **Observability** | `/metrics` JSON snapshot per AI. Structured access logs at `zhub.access`. Latency tracking. |
 
-- **`zhub.mcp_server`** — wraps a remote zhub AI as an MCP server you point Claude Desktop at.
-- **`examples/mcp_bridge.py`** — wraps an existing MCP server as a zhub publisher.
+---
 
-Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+## Performance
 
-```json
+zhub itself is a thin router. Brain dominates total time.
+
+| Brain | First token | Stream rate | Cost / ~750-token reply |
+|---|---|---|---|
+| **Cerebras Llama 405B** | ~150 ms | **2,000 tok/s** | ~$0.005 |
+| **Groq Llama 3.3 70B** | ~200 ms | **700+ tok/s** | ~$0.0006 *(generous free tier)* |
+| **OpenAI gpt-4o-mini** | ~400 ms | ~80 tok/s | ~$0.0005 |
+| **Anthropic Sonnet 4.5** | ~500 ms | ~100 tok/s | ~$0.011 |
+| **Ollama Llama 3.2 3B** *(local / $5 VPS)* | ~300 ms | 15–25 tok/s | **$0** |
+
+**Hub overhead:** 5–15 ms HTTP middleware. Cloudflare quick-tunnel adds 30–80 ms edge latency. WebSocket chat-chunk forwarding is 2–5 ms per chunk.
+
+> **Realistic personal stack:** $5/mo VPS + Groq free tier = ~$5/month for an always-on AI reachable from any device, any client, anywhere.
+
+---
+
+## Use it from anywhere
+
+Same URL + `zk_` key works in:
+
+| Surface | How |
+|---|---|
+| [**Pocket**](https://github.com/Zawwarsami16/pocket) | First-class zhub provider — auto-detects `zk_` keys |
+| **TypingMind / OpenWebUI / LibreChat / Chatbox / Msty / Jan.ai / BoltAI / AnythingLLM** | "Custom OpenAI provider" — paste base URL + key |
+| **Cursor / Continue.dev** | Custom OpenAI base URL setting |
+| **Claude Desktop / Cline** | Add `zhub.mcp_server` to MCP config — chat tool plus every connected capability appears as an MCP tool |
+| **openai-py** | `OpenAI(base_url="<hub>/<ai>/v1", api_key="zk_...")` |
+| **curl** | Standard OpenAI Chat Completions wire shape |
+
+---
+
+## 60-second example
+
+```bash
+# Start the hub + named publisher in one command
+GROQ_API_KEY=gsk_... python -m zhub up --name my-ai
+
+# Now from any other terminal — talk to it like OpenAI
+curl https://hub.example.com/my-ai/v1/chat/completions \
+  -H "Authorization: Bearer zk_BWO..." \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+```
+
+Add a tool from a separate machine, no pairing required:
+
+```python
+# weather-sensor.py — runs anywhere
+from zhub import expose
+
+e = expose(
+    name="weather-sensor",
+    capabilities={
+        "weather_lookup": (
+            {"type": "object", "required": ["city"],
+             "properties": {"city": {"type": "string"}}},
+            lambda args: {"city": args["city"], "temp_c": 22},
+        ),
+    },
+    hub_url="ws://hub.example.com",
+    public=True,
+)
+```
+
+Now any AI on the hub can call `weather_lookup` via `POST /exposures/<id>/invoke` *or* the AI's own brain can call it through the auto-resolved tool-call loop:
+
+```bash
+curl https://hub.example.com/my-ai/v1/chat/completions \
+  -H "Authorization: Bearer zk_BWO..." \
+  -d '{"messages":[{"role":"user","content":"weather in Mississauga?"}]}'
+# → AI emits tool_call get_weather → hub auto-invokes → AI returns final text
+```
+
+---
+
+## Observability
+
+```bash
+$ curl https://hub.example.com/metrics | jq
 {
-  "mcpServers": {
-    "my-zhub-ai": {
-      "command": "python",
-      "args": [
-        "-m", "zhub.mcp_server",
-        "--hub", "https://hub.example.com",
-        "--ai", "my-ai",
-        "--key", "zk_xxxxxxxxxxxxxxxxx"
-      ]
+  "hub_id": "hub_a3kZ8q",
+  "uptime_seconds": 91442,
+  "publishers": 2,
+  "connections": 1,
+  "by_ai": {
+    "my-ai": {
+      "chat_requests": 1247,
+      "tool_calls_resolved": 89,
+      "rate_limited": 3,
+      "request_count": 1247,
+      "total_latency_ms": 681104,
+      "max_latency_ms": 4112,
+      "avg_latency_ms": 546,
+      "connections": 1,
+      "uptime_seconds": 91442
     }
   }
 }
 ```
 
-Restart Claude Desktop and the AI shows up as a tool named `chat`. **Plus every capability the AI's connected clients expose** — `get_battery`, `send_whatsapp`, anything any client `connect()`s with — surfaces as its own MCP tool, callable directly from Claude. Same setup works for Cursor, Cline, and any other MCP host.
-
-For scripts that want to invoke a connected capability without going through chat, the hub also exposes a direct HTTP endpoint:
-
 ```bash
-curl -X POST https://hub.example.com/<ai>/v1/invoke \
-  -H "Authorization: Bearer zk_..." \
-  -H "Content-Type: application/json" \
-  -d '{"capability": "get_battery", "args": {}}'
-# → {"ok": true, "result": {"level": 78, "charging": false}, "connection_id": "cx_..."}
+$ journalctl -u zhub -f
+2026-05-10 14:22:01 INFO zhub.access: 200 GET /healthz 1ms
+2026-05-10 14:22:14 INFO zhub.access: 200 POST /my-ai/v1/chat/completions 412ms ai=my-ai
+2026-05-10 14:22:18 INFO zhub.access: 200 POST /exposures/ex_x9f/invoke 23ms
 ```
-
-The hub validates `args` against the capability's declared JSON schema before routing the call.
 
 ---
 
-## Swap the brain underneath
+## Self-knowledge layer
 
-Same publisher, four brain options, one CLI flag:
+`GET /entity` returns a single markdown file containing zhub's routes, errors, common patterns, debug recipes, install steps, performance tips. Any AI fetching this becomes instantly fluent in zhub:
 
 ```bash
-# auto-detect — uses Ollama if running locally, else Groq/OpenAI/Cerebras
-# whichever has credentials in the env
-python examples/multi_brain_publisher.py --name my-ai
-
-# explicit choice
-GROQ_API_KEY=gsk_... python examples/multi_brain_publisher.py --brain groq --name my-ai
-OLLAMA_HOST=http://localhost:11434 python examples/multi_brain_publisher.py --brain ollama --name my-ai
-
-# what's available right now?
-python examples/multi_brain_publisher.py --list
+$ curl https://hub.example.com/entity/errors/401
+### `401 invalid api key for this AI`
+Bearer key doesn't match the registered publisher for `<ai>`. Two common
+causes:
+1. Wrong key — check the key was generated by THIS hub for THIS AI.
+   Each hub generates its own keys; they don't roam.
+2. AI was re-registered with a fresh key — old keys are invalidated...
 ```
 
-The publisher prints a `zk_` key on startup. Any client (browser BYOK app, native client, curl, Claude Desktop) reaches it via `<hub>/<name>/v1/chat/completions` — restart the publisher with a different brain and **the key stays the same** (re-registration via persistence). External clients see no change; the brain underneath silently swaps.
-
-Adapters live in `zhub/brains/` and implement a tiny `BrainAdapter` interface (one async streaming method). Adding a new brain is ~80 lines.
+Operators extend per-deployment with `POST /entity/extend` (auth: any registered publisher's bearer key). Each hub grows its own institutional memory. Every 4xx/5xx response carries an `X-Zhub-Entity-Hint` header pointing at the relevant recipe — calling AIs can self-debug without context bloat.
 
 ---
 
-## Manifest format (v0.1)
+## Quickstart by use case
 
-When an AI registers, it publishes a manifest like:
+### "I want a personal AI reachable from my phone"
+```bash
+ssh my-vps
+git clone https://github.com/Zawwarsami16/zhub && cd zhub
+pip install -e '.[server,brains]'
+GROQ_API_KEY=gsk_... python -m zhub up --tunnel-name myhub
+```
+Paste URL + key into Pocket. Done. See [`docs/DEPLOY.md`](docs/DEPLOY.md) for systemd setup.
 
+### "I want a free local AI"
+```bash
+ollama serve &
+ollama pull llama3.2
+python -m zhub up --brain ollama
+```
+$0/month forever. Brain runs on your machine.
+
+### "I want any AI to call my custom Python tool"
+```python
+from zhub import expose
+expose(
+    name="my-tool",
+    capabilities={"do_thing": (json_schema, handler)},
+    hub_url="ws://localhost:8080",
+    public=True,
+)
+```
+Run that. Now any AI on the hub can call `do_thing` via `/exposures/<id>/invoke`.
+
+### "I want to use my AI in Claude Desktop"
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
-  "schema_version": "0.1",
-  "name": "my-ai",
-  "description": "A simple example AI",
-  "accepts": "openai-v1-chat-completions",
-  "auth": {"type": "bearer"},
-  "rate_limit": "60/min",
-  "capabilities": [
-    {"name": "chat", "description": "OpenAI chat completions", "schema": {...}}
-  ],
-  "public": true,
-  "operator": "me",
-  "endpoints": {
-    "chat":     "/my-ai/v1/chat/completions",
-    "manifest": "/my-ai/manifest.json",
-    "registry": "/registry"
-  },
-  "connections": [
-    {
-      "connection_id": "cx_abc",
-      "client_manifest": {...},
-      "connected_for_seconds": 142
+  "mcpServers": {
+    "my-ai": {
+      "command": "python",
+      "args": ["-m", "zhub.mcp_server",
+               "--hub", "https://hub.example.com",
+               "--ai", "my-ai",
+               "--key", "zk_..."]
     }
-  ]
+  }
 }
 ```
-
-A connecting client publishes a similar manifest describing the capabilities it exposes back to the AI.
+Restart Claude Desktop. The AI shows up as a `chat` tool — plus every connected capability becomes its own native MCP tool.
 
 ---
 
-## Why this exists
+## How it compares
 
-Every AI tool I've written ends up needing the same plumbing: a way to be reached, a way to be authenticated, a way to know what's connected to it. Existing options each handle a slice:
+|  | zhub | LangServe | ngrok + custom API | bare MCP server | Cloudflare Workers AI |
+|---|---|---|---|---|---|
+| OpenAI-compat HTTPS endpoint | ✅ | ✅ | DIY | ❌ (stdio only) | ✅ |
+| Bidirectional client capabilities | ✅ | ❌ | ❌ | one-way tools | ❌ |
+| Brain-agnostic (5 adapters built in) | ✅ | partial | DIY | ❌ | locked-in |
+| Federation across hubs | ✅ | ❌ | ❌ | ❌ | ❌ |
+| MCP server for Claude Desktop | ✅ | ❌ | ❌ | native | ❌ |
+| Browser BYOK clients (CORS + /v1/models) | ✅ | partial | DIY | ❌ | ✅ |
+| Per-deployment self-knowledge layer | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Cost: $5 VPS + free Groq tier | ✅ | ✅ | $$ | $0 (single host) | $$$ |
 
-| Tool | Covers | Misses |
+---
+
+## Multi-language clients
+
+| Lang | Status | Path |
 |---|---|---|
-| ngrok / cloudflare tunnel | endpoint exposure | no manifest, no auth, no client awareness |
-| Anthropic MCP | capability publishing, tool exposure | server-side, complex setup, AI-as-client framing |
-| Google A2A | agent-to-agent | enterprise-focused, early |
-| LangServe | chain endpoints | no auto-discovery, no bidirectional |
-| OpenRouter | LLM aggregation | brings OpenRouter's models, not yours |
-| Custom GPTs | chat-as-config | locked to OpenAI's ecosystem |
+| **Python** | full publish + connect + expose + signing + brains | `zhub/` |
+| **TypeScript / JavaScript** | publish + connect, browser + Node | [`js/`](js/) — `npm install @zawwarsami/zhub` |
+| **Kotlin** | connect-mode primitives for JVM/Android | [`kotlin/`](kotlin/) |
 
-`zhub` is opinionated about one thing: the AI should be the hub, and discovering what's connected to it should be a one-liner from inside the AI's own code. Everything else (tunnels, auth, schema validation) is plumbing.
+All three speak the same JSON-over-WebSocket envelope. They interoperate against the same hub.
+
+---
+
+## Production deployment
+
+[`docs/DEPLOY.md`](docs/DEPLOY.md) walks a $5 VPS deployment in 10 minutes:
+
+- Ubuntu user setup
+- `cloudflared` named tunnel → stable hostname forever
+- Two systemd units (hub + tunnel) with auto-restart
+- Brain credentials via env vars in unit file
+- Backup strategy for `zhub.db`
+- Live tail logs via `journalctl`
+- Update strategy
+
+---
+
+## Tests
+
+```bash
+$ pytest
+======================= 141 passed in 63.56s =======================
+```
+
+```bash
+$ cd js && npm test
+> 13 passed
+```
+
+CI runs the Python suite on 3.10 / 3.11 / 3.12 plus the JS module test on every push to `main`. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ---
 
 ## Roadmap
 
-Shipped:
-
-- **0.1** — publish, connect, hub server, JSON manifest, OpenAI-compat proxy, capability invocation.
-- **0.2** — Cloudflare Tunnel auto-config (`--public-tunnel`).
-- **0.3** — Kotlin client library for JVM/Android. JS/TS client (`js/`).
-- **0.4** — Streaming responses end-to-end (SSE through hub).
-- **0.5** — SQLite persistence, re-registration after restart, public registry UI.
-- **0.9** — Multi-AI council pattern.
-- **1.0** — Signed manifests (ed25519) with key pinning, read-only federation (`/registry/global`).
-- **1.1** — Cross-hub call routing: hub A proxies a chat to hub B if B has the AI; loop prevention via `X-Zhub-Forwarded-By`.
-- **1.2** — JS/TS client (`@zawwarsami/zhub`): publish/connect with auto-reconnect, bidirectional invoke.
-- **1.1b** — Cross-hub WebSocket routing. A connect()-side client opens its WS at any hub; if the AI lives on a peer, the hub transparently tunnels.
-- **1.7** — Sliding-window rate limiting per api_key, configured by `manifest.rate_limit` (`"60/min"`, `"10/s"`, …).
-- **1.8** — OpenAI tool calls end-to-end: hub auto-invokes connected-client capabilities matching `tool_calls`, feeds results back as `role:tool` messages, returns final text. Audit log in `usage.tool_results`. Opt out per request with `X-Zhub-Tool-Resolve: client`. Parallel resolution via `asyncio.gather`.
-- **1.9** — Auto-injection of connected-client capabilities into the chat-request as OpenAI tools, so the LLM sees runtime tools without operator plumbing.
-- **2.0** — `GET /metrics` JSON snapshot: per-AI counters for chat, rate-limited, peer-proxied, tool-resolved, http-invoke.
-- **2.1** — `python -m zhub.mcp_server` exposes any zhub AI to Claude Desktop / Cursor / Cline as an MCP server.
-- **2.2** — Tool-call args validated against the capability's JSON schema before invoke (no new deps).
-- **2.3** — Direct `POST /<ai>/v1/invoke` HTTP endpoint + connected capabilities surface as first-class MCP tools (not just `chat`).
-
-Next:
-
-- Tool streaming via SSE (chunked tool_calls).
-- Multi-tier API keys + per-tier rate limits.
-- True chunked tool_call deltas through SSE (Phase 4.2b).
+| | What |
+|---|---|
+| **4.2b** | True chunked tool_call delta streaming through SSE (today: pre-resolve mode) |
+| **7.1** | Per-exposure access policies (whitelist of AI names / publisher keys) |
+| **More brains** | Cohere, Mistral, Together, Bedrock, Vertex, vLLM-direct |
+| **MCP resources + prompts** | Surface zhub-served files & prompts to MCP hosts, beyond just tools |
+| **Hub UI dashboard** | Live view of connected publishers, recent requests, latency histograms, exposed devices |
+| **Multi-tier API keys** | Read / full / admin tiers per AI |
+| **Federation v2** | Signed peer relationships, shared identity registry across federated hubs |
 
 ---
 
@@ -361,6 +358,20 @@ Next:
 
 MIT. See [`LICENSE`](LICENSE).
 
+---
+
+## Contributing
+
+Issues and PRs welcome. The codebase is intentionally small — every file does one thing.
+
+For larger changes, walk through `docs/superpowers/specs/` to see the design conversations behind shipped phases. The same pattern (spec → plan → TDD → ship) is the contributor's path of least resistance.
+
+### Acknowledgments
+
+Built collaboratively with **Claude (Anthropic)** as a pair-programming partner. The git history is the trail — every commit is co-authored. Specs and plans live under `docs/superpowers/`. Architecture decisions, primitive choices, and the "substrate not product" stance were worked through in conversation; implementation followed strict spec → plan → TDD discipline. Same craftsmanship standard would have applied without an AI partner; with one, it shipped faster.
+
+---
+
 ## Author
 
-Zawwar Sami — github.com/Zawwarsami16
+Zawwar Sami — [github.com/Zawwarsami16](https://github.com/Zawwarsami16)

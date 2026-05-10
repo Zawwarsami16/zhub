@@ -2,8 +2,7 @@
 End-to-end demo: AI publishes itself, client connects with capabilities,
 AI invokes a client capability, sees the result.
 
-This is the killer demo from the docs — Father's WiFi-for-AIs vision proven
-in <100 lines.
+End-to-end proof of the WiFi-for-AIs model in under 100 lines.
 
 Run:
     1. python -m zhub.server --port 8080
