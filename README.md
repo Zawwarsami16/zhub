@@ -42,6 +42,30 @@ Three commands. One URL + key. Reachable from anywhere.
 
 ---
 
+## See it running
+
+A fresh `git clone` on a Linux VM, a Groq brain published in one command, and a Windows PowerShell client talking to it through a Cloudflare tunnel — no SDK, no glue code, just the OpenAI Chat Completions wire format.
+
+**1. Start the hub (Linux VM, terminal 1).** One command brings up the FastAPI router, persistent SQLite, and a public Cloudflare tunnel. The public URL is printed in a box and exposed at `/hub/identity` for any publisher or client to discover.
+
+![hub starting with public tunnel](docs/screenshots/hub.png)
+
+**2. Publish a brain (Linux VM, terminal 2).** `multi_brain_publisher.py` registers a Groq Llama-3.3-70B publisher under the name `zai`. The publisher auto-discovers the hub's public URL and prints a copy-paste-ready box with `URL`, `KEY`, and a working curl example. Every brain that connects via this script ships with a built-in zhub-aware preamble — so the AI naturally knows it's part of the substrate without anyone writing a system prompt.
+
+![publisher live with full URL + KEY box](docs/screenshots/publisher.png)
+
+**3. Talk to it from anywhere (Windows PowerShell).** Same URL + KEY. No zhub install on the client side — just `Invoke-RestMethod`. Three different prompts (intro / meta / code) all answered coherently, with the brain naturally explaining that it's running on Groq Llama 3.3 70B *behind a substrate called zhub that lets it be reached from many places at once*. Nothing in the client said any of that — the substrate did.
+
+![PowerShell client hitting the URL with three prompts](docs/screenshots/powershell.png)
+
+**4. Watch it from the operator deck.** The hub serves a live dashboard at `/` — animated SVG showing CLIENTS → HUB → PUBLISHERS traffic flow, p95 latency, total chats, recent requests. The same `zai` publisher visible online with its Groq backend, every PowerShell call flowing through as a particle.
+
+![live operator dashboard with traffic flow](docs/screenshots/dashboard.png)
+
+End to end: Linux VM hosting the hub + publisher → Cloudflare tunnel → Windows client over HTTPS → Groq backend → response back to the client → dashboard updates in real time. **Same primitive scales to phones (Pocket), IDEs (Cursor), MCP clients (Claude Desktop), or any HTTP caller.**
+
+---
+
 ## Why
 
 Today, exposing a custom AI (an agent, a fine-tuned local model, a custom RAG stack, an MCP server) to the rest of your tools means re-writing the same plumbing every time: auth, tunnel, API gateway, SDK, retries, MCP bridge, identity, federation.
@@ -52,9 +76,11 @@ Today, exposing a custom AI (an agent, a fine-tuned local model, a custom RAG st
 
 ### Origin
 
-I'm building a private autonomous AI (**ZAI**) that I want reachable from everywhere — phone chat ([Pocket](https://github.com/Zawwarsami16/pocket)), laptop dev tools (Claude Desktop, Cursor), custom surfaces — without writing the same auth/tunnel/SDK plumbing five times. zhub is the substrate I extracted from that need.
+I built zhub for my own private AI — **ZAI** — that I want reachable from everywhere: phone chat ([Pocket](https://github.com/Zawwarsami16/pocket)), laptop dev tools (Claude Desktop, Cursor), custom surfaces — without writing the same auth/tunnel/SDK plumbing five times. ZAI itself stays private. What made it interesting to *build the connector right* is what's open source here.
 
-ZAI itself stays private; what made it interesting to *build the connector right* is what's open source here. The same primitive works for any AI — yours, mine, a model someone hasn't trained yet. zhub doesn't care.
+I can't show ZAI directly, so the [LinkedIn demo](https://www.linkedin.com/in/zawwarsami) instead wraps a **Claude Code session** as a zhub publisher and reaches it from Pocket on a phone — same substrate, different brain. The screenshots above are a separate reproducible flow: a fresh `git clone` on a Linux virtual machine, a Groq brain published with the API key the user generated, and Windows PowerShell talking to it through the tunnel. Every screenshot, every URL, every response is from a real first-time install — nothing staged.
+
+The same primitive works for any AI — yours, mine, a model someone hasn't trained yet. zhub doesn't care.
 
 ---
 
