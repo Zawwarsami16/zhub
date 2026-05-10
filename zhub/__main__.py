@@ -20,6 +20,7 @@ commands:
   up         start hub + tunnel + brain publisher in one go (recommended)
   server     start just the hub server (legacy entry point)
   doctor     diagnose the install using shipped entity recipes
+  status     pretty-print a remote hub's state from its /api/dashboard
 
 run `python -m zhub <command> --help` for command-specific options.
 """
@@ -44,6 +45,10 @@ def main(argv: list[str] | None = None) -> None:
     if cmd == "doctor":
         from zhub.cli_doctor import run as doctor_run
         doctor_run(rest)
+        return
+    if cmd == "status":
+        from zhub.cli_status import run as status_run
+        status_run(rest)
         return
     print(f"unknown command: {cmd!r}\n", file=sys.stderr)
     print(_USAGE, file=sys.stderr)

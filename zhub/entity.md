@@ -38,6 +38,18 @@ Verify the install with `python -m zhub doctor` — checks Python version,
 imports, optional `cloudflared`, brain credentials in env, and prints
 next-step commands.
 
+## status
+
+`python -m zhub status <hub-url>` pretty-prints a remote hub's state
+(publishers, exposures, recent activity, latency percentiles, peers)
+by hitting `<url>/api/dashboard`. Add `--json` for raw output suitable
+for scripting. No auth needed — same data the browser dashboard polls.
+
+```bash
+python -m zhub status https://hub.example.com
+python -m zhub status http://127.0.0.1:8080 --json
+```
+
 ## up
 
 The fastest path from clone to a usable URL+key:
