@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhub"
-version = "0.2.0"
+version = "0.3.0"
 description = "WiFi for AIs — substrate that lets any AI publish a discoverable, OpenAI-compat endpoint reachable from anywhere."
 readme = "README.md"
 requires-python = ">=3.10"

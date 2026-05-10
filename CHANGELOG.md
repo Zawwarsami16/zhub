@@ -2,6 +2,28 @@
 
 All notable changes to zhub. Versions follow [SemVer](https://semver.org/).
 
+## [0.3.0] — 2026-05-10
+
+### Added
+- **MCP resources + prompts** (Phase 9.0) — publishers declare `resources=[...]` and `prompts=[...]` in `publish()`; the MCP bridge now serves the full triple (tools + resources + prompts) so Claude Desktop / Cursor / Cline see all three surfaces. Static-only for v1; dynamic round-trip is a future phase.
+- **Per-AI latency percentiles** (Phase 10.0) — `/metrics` and `/api/dashboard` now include `p50_latency_ms`, `p95_latency_ms`, `p99_latency_ms` per AI, computed from a 200-sample ring buffer.
+- **3 more brain adapters** (Phase 11.0) — Together, Mistral, Cohere. Brings total to 8: Ollama / Groq / OpenAI / Cerebras / Anthropic / Together / Mistral / Cohere. Refactored shared OpenAI-compat helper means future adapters are ~50 LOC.
+- **Futuristic operator dashboard** (Phase 12.0) — animated SVG live traffic flow with particles per request, glassmorphism panels, neon HD blue/red palette, sparklines, recent-request feed, color-coded status, scanline overlay.
+- **Public release polish** (Phase 13.0) — `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`. Multi-stage Dockerfile with non-root user + healthcheck. `zhub` CLI script alias. Python 3.13 in classifiers.
+- **Distribution & ops** (Phase 14.0) — `docker-compose.yml` with optional cloudflared sidecar profile. `.github/workflows/release.yml` — tag-triggered PyPI publish + multi-arch GHCR Docker push. `py.typed` PEP 561 marker.
+- **Per-exposure access policies** (Phase 15.0) — `expose(allow_publishers=["zai", "claude-here"])` whitelists which AIs may invoke. Empty list `[]` is a kill switch. Policy surfaces in `/exposures` listing.
+- **`zhub status <hub-url>` CLI** (Phase 16.0) — pretty-print remote hub state from `/api/dashboard`. `--json` for scripting. GitHub issue/PR templates added with substrate-alignment checks. New `examples/full_stack_demo.py` runs the whole stack in one process.
+- **Hub identity + signed peer routing** (Phase 17.0) — each hub generates a long-lived ed25519 keypair persisted in SQLite; `GET /hub/identity` exposes the public key. Cross-hub HTTP requests sign their forwarded chain; receiving hubs verify against the originator's published identity. Backwards-compatible (unsigned still accepted unless `ZHUB_REQUIRE_VERIFIED_PEERS=1`).
+- **Prometheus metrics format** (Phase 18.0) — `/metrics?format=prometheus` returns OpenMetrics text exposition with per-AI counters labeled by `ai`. Drop-in for Prometheus / VictoriaMetrics / Datadog OpenMetrics agents.
+- **`docs/TUTORIAL.md`** (Phase 18.0) — 10-minute hands-on walkthrough from clone to "Pocket talks to your AI".
+- **`examples/README.md`** (Phase 18.0) — index of all 9 runnable examples.
+- **Built-in browser chat client at `/chat`** (Phase 19.0) — self-contained 16 KB HTML chat UI in the same dark/cyan/neon palette. Auto-detects single-publisher hubs. SSE streaming with tool-call delta visualization. Settings persist to localStorage. Anyone can chat with their zhub AI without installing Pocket / curl / openai-py.
+
+### Test surface
+- 178 pytest, 13 node:test
+- 19 numbered phases shipped post-0.2.0, every CI run green
+- Spec + plan docs for each phase live under `docs/superpowers/specs/` and `docs/superpowers/plans/`
+
 ## [0.2.0] — 2026-05-10
 
 ### Added

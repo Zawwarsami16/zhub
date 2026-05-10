@@ -7,9 +7,9 @@
 [![CI](https://github.com/Zawwarsami16/zhub/actions/workflows/ci.yml/badge.svg)](https://github.com/Zawwarsami16/zhub/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-164%20%2B%2013-brightgreen)](#tests)
+[![Tests](https://img.shields.io/badge/tests-178%20%2B%2013-brightgreen)](#tests)
 [![Brains](https://img.shields.io/badge/brains-8-cyan)](#performance)
-[![Version](https://img.shields.io/badge/version-0.2.0-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.0-orange)](CHANGELOG.md)
 
 </div>
 
