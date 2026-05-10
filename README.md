@@ -66,6 +66,22 @@ End to end: Linux VM hosting the hub + publisher → Cloudflare tunnel → Windo
 
 ---
 
+## Bridge pattern: an interactive AI session as a publisher
+
+A normal publisher wraps an HTTP brain (Groq, Anthropic, Ollama, …). The **bridge pattern** is for when the brain is *interactive* — a Claude Code session, a Cursor tab, a custom agent loop, even a person at a keyboard. The chat handler writes each request to an inbox file; the agent watches the inbox, replies into an outbox file; the handler returns the reply.
+
+Concretely: a fresh Claude Code session on a laptop, given a one-paragraph setup prompt, becomes reachable from Pocket on a phone in about a minute.
+
+![fresh Claude Code session receiving the bridge setup prompt](docs/screenshots/bridge/claude-receiving-prompt.png)
+
+![Pocket on phone talking to that Claude Code session through zhub](docs/screenshots/bridge/pocket-to-claude-code.png)
+
+End to end: phone → cloudflared tunnel → hub → file bridge → Claude Code session running on a laptop in another room → reply back the same way. The session keeps its full toolset (Bash, Read, Write, all of it) because it *is* a real Claude Code session, not a wrapped API. Bridge latency is ~0.4s file polling plus whatever the agent takes to think.
+
+Full how-to in [`docs/BRIDGE_PATTERN.md`](docs/BRIDGE_PATTERN.md).
+
+---
+
 ## Why
 
 Every time you want a custom AI reachable from your tools — an agent, a local model, a RAG stack, an MCP server — you end up rewriting the same plumbing: auth, tunnel, API gateway, SDK, retries, MCP bridge, identity, federation. I got tired of that.
