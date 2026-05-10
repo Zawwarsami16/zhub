@@ -37,7 +37,7 @@ def test_registry_holds_classes_in_priority_order():
     The four shipped adapters land in this order: Ollama, Groq, OpenAI,
     Cerebras."""
     names = [cls.name for cls in REGISTRY]
-    assert names == ["ollama", "groq", "openai", "cerebras"]
+    assert names == ["ollama", "groq", "openai", "cerebras", "anthropic"]
 
 
 def test_detect_returns_first_available(monkeypatch):

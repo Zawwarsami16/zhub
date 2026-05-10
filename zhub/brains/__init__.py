@@ -20,6 +20,7 @@ from .ollama import OllamaAdapter
 from .groq import GroqAdapter
 from .openai import OpenAIAdapter
 from .cerebras import CerebrasAdapter
+from .anthropic import AnthropicAdapter
 
 
 REGISTRY: list[type[BrainAdapter]] = [
@@ -27,6 +28,7 @@ REGISTRY: list[type[BrainAdapter]] = [
     GroqAdapter,
     OpenAIAdapter,
     CerebrasAdapter,
+    AnthropicAdapter,
 ]
 
 
@@ -55,5 +57,6 @@ def list_available() -> list[BrainAdapter]:
 __all__ = [
     "BrainAdapter", "ChatChunk", "REGISTRY",
     "detect", "list_available",
-    "OllamaAdapter", "GroqAdapter", "OpenAIAdapter", "CerebrasAdapter",
+    "OllamaAdapter", "GroqAdapter", "OpenAIAdapter",
+    "CerebrasAdapter", "AnthropicAdapter",
 ]

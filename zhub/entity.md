@@ -7,12 +7,71 @@
 > hub's actual behavior.
 
 **How to use:** `GET /entity` returns this whole file. `GET /entity/<section>`
-returns just one section (`routes`, `errors`, `patterns`, `debug`, `perf`).
+returns just one section (`install`, `up`, `routes`, `errors`,
+`patterns`, `debug`, `perf`, `paths`, `conventions`, `architecture`).
 `GET /entity/errors/<code>` returns one error's recipe. On any 4xx/5xx
 response the hub adds an `X-Zhub-Entity-Hint` header pointing at the
 relevant section.
 
+**You don't need a running hub to fetch this file.** The same content
+ships in the package at `zhub/entity.md` — install zhub and read it
+locally before bringing anything up.
+
 ---
+
+## install
+
+Smallest viable install on any Linux/Mac (Termux works too):
+
+```bash
+git clone https://github.com/Zawwarsami16/zhub
+cd zhub
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e '.[server,brains]'
+```
+
+Optional extras:
+- `[crypto]` — adds `cryptography` for ed25519 signed manifests
+- `[dev]`    — adds pytest + httpx for running the test suite
+
+Verify the install with `python -m zhub doctor` — checks Python version,
+imports, optional `cloudflared`, brain credentials in env, and prints
+next-step commands.
+
+## up
+
+The fastest path from clone to a usable URL+key:
+
+```bash
+python -m zhub up                          # auto-detect brain, public tunnel ON
+python -m zhub up --no-tunnel              # local URL only
+python -m zhub up --brain ollama --name me # explicit brain + AI name
+GROQ_API_KEY=gsk_... python -m zhub up     # provide creds inline
+```
+
+`up` boots the hub, optionally starts a Cloudflare quick-tunnel, picks
+the first available brain, publishes, and prints `URL:` + `KEY:` lines
+ready to paste into any OpenAI-compatible client. Ctrl-C tears the
+whole thing down cleanly.
+
+If no brain credentials are present, `up` still brings the hub online
+but skips the publisher; you can start one separately with
+`python examples/multi_brain_publisher.py`.
+
+## paths
+
+What ends up where on disk:
+
+- `zhub.db` — SQLite, in the cwd by default. Holds publishers (so a
+  `zk_` key survives restarts) and operator-added entity extensions.
+  Override with `--db <path>` or pass `--db ""` to disable persistence.
+- `~/.cloudflared/` — cloudflared's config dir (only relevant for
+  named/persistent tunnels; quick-tunnels use no config).
+- Default port: 8080. `up` falls back to a free port if 8080 is taken.
+- Logs go to stderr at `info` level by default. `--log-level warning`
+  to quiet them.
+- `entity.md` ships inside the package at `zhub/entity.md`. The hub
+  serves it from disk (or in-memory cache) at `GET /entity`.
 
 ## architecture
 
