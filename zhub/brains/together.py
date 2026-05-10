@@ -1,9 +1,11 @@
-"""GroqAdapter — wraps Groq's OpenAI-compatible API.
+"""TogetherAdapter — wraps Together AI's chat completions API.
 
-Probe: GET https://api.groq.com/openai/v1/models with bearer key, 1.5s timeout.
-Stream: POST /openai/v1/chat/completions with stream=true.
-Env:    GROQ_API_KEY   (required)
-        GROQ_MODEL     (default llama-3.3-70b-versatile)
+Together hosts a wide selection of open Llama / Qwen / Mistral / DeepSeek
+models behind an OpenAI-compatible API at https://api.together.xyz/v1.
+
+Probe: GET /v1/models, 1.5s timeout.
+Env:   TOGETHER_API_KEY  (required)
+       TOGETHER_MODEL    (default meta-llama/Llama-3.3-70B-Instruct-Turbo)
 """
 
 from __future__ import annotations
@@ -17,13 +19,13 @@ from .base import BrainAdapter, ChatChunk
 from ._openai_compat import probe_openai_compat, stream_openai_compat
 
 
-_BASE_URL = "https://api.groq.com/openai/v1"
-_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+_BASE_URL = "https://api.together.xyz/v1"
+_DEFAULT_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
 
 
-class GroqAdapter(BrainAdapter):
-    name = "groq"
-    label = "Groq Llama 3.3 70B"
+class TogetherAdapter(BrainAdapter):
+    name = "together"
+    label = "Together AI (Llama 3.3 70B Turbo)"
 
     def __init__(
         self,
@@ -36,11 +38,11 @@ class GroqAdapter(BrainAdapter):
         self._http = http or httpx.AsyncClient(timeout=120.0)
 
     @classmethod
-    def try_init(cls) -> Optional["GroqAdapter"]:
-        key = os.environ.get("GROQ_API_KEY")
+    def try_init(cls) -> Optional["TogetherAdapter"]:
+        key = os.environ.get("TOGETHER_API_KEY")
         if not key or not probe_openai_compat(_BASE_URL, key):
             return None
-        model = os.environ.get("GROQ_MODEL", _DEFAULT_MODEL)
+        model = os.environ.get("TOGETHER_MODEL", _DEFAULT_MODEL)
         return cls(api_key=key, model=model)
 
     async def stream(

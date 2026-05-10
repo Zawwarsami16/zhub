@@ -21,6 +21,9 @@ from .groq import GroqAdapter
 from .openai import OpenAIAdapter
 from .cerebras import CerebrasAdapter
 from .anthropic import AnthropicAdapter
+from .together import TogetherAdapter
+from .mistral import MistralAdapter
+from .cohere import CohereAdapter
 
 
 REGISTRY: list[type[BrainAdapter]] = [
@@ -29,6 +32,9 @@ REGISTRY: list[type[BrainAdapter]] = [
     OpenAIAdapter,
     CerebrasAdapter,
     AnthropicAdapter,
+    TogetherAdapter,
+    MistralAdapter,
+    CohereAdapter,
 ]
 
 
@@ -59,4 +65,5 @@ __all__ = [
     "detect", "list_available",
     "OllamaAdapter", "GroqAdapter", "OpenAIAdapter",
     "CerebrasAdapter", "AnthropicAdapter",
+    "TogetherAdapter", "MistralAdapter", "CohereAdapter",
 ]

@@ -100,7 +100,7 @@ The hub is a router. State (publisher registry, in-flight requests, rate-limit w
 | **`publish()`** | Turn any chat handler into an OpenAI-compat HTTPS endpoint. Auto-tunneled. `zk_` API key. Persistence-stable across restarts. |
 | **`connect()`** | Pair a client to one specific AI. Expose capabilities back; the AI sees them as connected tools and can invoke them. |
 | **`expose()`** *(Phase 7.0)* | Device registers capabilities once, **untethered to any AI**. Any AI on the hub can use them via `POST /exposures/<id>/invoke`. |
-| **5 brain adapters** | Ollama, Groq, OpenAI, Cerebras, Anthropic — drop-in, streaming-first. Swap brain with a flag, key stays the same. |
+| **8 brain adapters** | Ollama, Groq, OpenAI, Cerebras, Anthropic, Together, Mistral, Cohere — drop-in, streaming-first. Swap brain with a flag, key stays the same. |
 | **MCP, both directions** | Wrap a zhub AI as an MCP server (`python -m zhub.mcp_server`) for Claude Desktop. Wrap an MCP server as a zhub publisher (`examples/mcp_bridge.py`). |
 | **Tool calls** | OpenAI `tool_calls` auto-resolved against connected capabilities + exposures. Parallel resolution. JSON-Schema arg validation. Audit log in `usage.tool_results`. |
 | **Federation** | Multiple hubs peer each other. Cross-hub HTTP chat + cross-hub WebSocket connect, transparent to the client. |
@@ -118,7 +118,10 @@ zhub itself is a thin router. Brain dominates total time.
 |---|---|---|---|
 | **Cerebras Llama 405B** | ~150 ms | **2,000 tok/s** | ~$0.005 |
 | **Groq Llama 3.3 70B** | ~200 ms | **700+ tok/s** | ~$0.0006 *(generous free tier)* |
+| **Together Llama 3.3 70B Turbo** | ~250 ms | ~250 tok/s | ~$0.0006 |
+| **Mistral Large** | ~350 ms | ~80 tok/s | ~$0.006 |
 | **OpenAI gpt-4o-mini** | ~400 ms | ~80 tok/s | ~$0.0005 |
+| **Cohere Command-R+** | ~450 ms | ~80 tok/s | ~$0.005 |
 | **Anthropic Sonnet 4.5** | ~500 ms | ~100 tok/s | ~$0.011 |
 | **Ollama Llama 3.2 3B** *(local / $5 VPS)* | ~300 ms | 15–25 tok/s | **$0** |
 
@@ -352,7 +355,7 @@ CI runs the Python suite on 3.10 / 3.11 / 3.12 plus the JS module test on every 
 |---|---|
 | **~~4.2b~~** ✅ | True chunked tool_call delta streaming through SSE (default mode passes deltas through; `auto` mode also resolves+continues) |
 | **7.1** | Per-exposure access policies (whitelist of AI names / publisher keys) |
-| **More brains** | Cohere, Mistral, Together, Bedrock, Vertex, vLLM-direct |
+| ~~**More brains**~~ ✅ | Phase 11.0: Together, Mistral, Cohere added (8 total). Bedrock + Vertex remain (~80 LOC each via the shared OpenAI-compat helper) |
 | ~~**MCP resources + prompts**~~ ✅ | Phase 9.0: publishers declare `resources=` and `prompts=` in `publish()`; the MCP bridge surfaces them as resources/list, resources/read, prompts/list, prompts/get |
 | ~~**Hub UI dashboard**~~ ✅ | Live view of connected publishers, recent requests, latency, exposed devices — at `/` (Phase 8.0) |
 | ~~**Latency percentiles**~~ ✅ | Phase 10.0: p50/p95/p99 per AI in `/metrics` + dashboard, from a 200-sample ring buffer |
