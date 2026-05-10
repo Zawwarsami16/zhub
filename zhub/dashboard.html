@@ -3,157 +3,438 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>zhub · operator dashboard</title>
+  <title>zhub · live operator deck</title>
   <style>
+    /* ---- palette ---- */
     :root {
-      --bg: #0a0e0a;
-      --panel: #0f1310;
-      --border: #1f2d24;
-      --text: #d9f2da;
-      --dim: #7a9c82;
-      --accent: #39ff7a;
-      --warn: #ffb400;
-      --err: #ff5470;
-      --ok: #5ac8fa;
-      --pub: #10b981;
-      --conn: #a855f7;
-      --exp: #f97316;
+      --bg-0: #02050d;
+      --bg-1: #060a1a;
+      --bg-2: #0a1024;
+      --grid: #0a1330;
+      --glass: rgba(10, 18, 40, 0.55);
+      --glass-edge: rgba(0, 200, 255, 0.18);
+      --text: #e0f0ff;
+      --dim: #5d7aa3;
+      --blue: #00b4ff;
+      --blue-deep: #0066ff;
+      --cyan: #00f0ff;
+      --red: #ff2860;
+      --red-glow: #ff5080;
+      --green: #00ff95;
+      --amber: #ffae00;
+      --pub: #00ff95;
+      --conn: #c060ff;
+      --exp: #ff8a00;
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0; padding: 0;
-      background: var(--bg); color: var(--text);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: radial-gradient(ellipse at top, var(--bg-2), var(--bg-0));
+      color: var(--text);
+      font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 13px; line-height: 1.5;
+      min-height: 100vh;
+      overflow-x: hidden;
     }
-    a { color: var(--ok); text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    /* faint grid background */
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none;
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+      opacity: 0.4;
+    }
+    /* scanline overlay */
+    body::after {
+      content: ""; position: fixed; inset: 0; pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 200, 255, 0.018) 0px,
+        rgba(0, 200, 255, 0.018) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 1;
+    }
+
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-shadow: 0 0 8px var(--cyan); }
+
+    /* ---- header ---- */
     header {
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--border);
-      display: flex; align-items: baseline; justify-content: space-between;
-      flex-wrap: wrap; gap: 12px;
+      padding: 20px 32px; position: relative; z-index: 2;
+      border-bottom: 1px solid var(--glass-edge);
+      backdrop-filter: blur(12px);
+      background: linear-gradient(180deg, rgba(0,180,255,0.06), transparent);
+      display: flex; flex-wrap: wrap; gap: 16px;
+      justify-content: space-between; align-items: baseline;
     }
-    header h1 { color: var(--accent); margin: 0; font-size: 1.4rem; letter-spacing: .02em; }
-    header .meta { color: var(--dim); font-size: 0.85rem; }
+    header h1 {
+      margin: 0; font-size: 1.6rem; letter-spacing: 0.18em; font-weight: 600;
+      background: linear-gradient(90deg, var(--cyan), var(--blue), var(--cyan));
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: shimmer 6s linear infinite;
+    }
+    @keyframes shimmer { to { background-position: 200% 0; } }
+    header .tag {
+      color: var(--red); margin-left: 12px; font-size: 0.85rem;
+      letter-spacing: 0.3em; text-shadow: 0 0 12px rgba(255,40,96,0.7);
+    }
+    header .meta { color: var(--dim); font-size: 0.78rem; letter-spacing: 0.05em; }
+    header .meta a { margin-left: 12px; }
+
+    .pulse {
+      display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+      background: var(--green); margin-right: 10px; vertical-align: middle;
+      box-shadow: 0 0 12px var(--green), 0 0 24px var(--green);
+      animation: heartbeat 1.4s ease-in-out infinite;
+    }
+    @keyframes heartbeat {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+
     main {
-      padding: 16px 24px; max-width: 1400px; margin: 0 auto;
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 16px;
+      padding: 24px 32px 96px; max-width: 1500px; margin: 0 auto;
+      position: relative; z-index: 2;
     }
-    section {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 14px 16px;
+
+    /* ---- glass panels ---- */
+    .panel {
+      background: var(--glass);
+      border: 1px solid var(--glass-edge);
+      border-radius: 8px;
+      padding: 18px 20px;
+      backdrop-filter: blur(20px);
+      box-shadow:
+        inset 0 1px 0 rgba(0, 240, 255, 0.06),
+        0 4px 24px rgba(0, 100, 255, 0.05);
+      position: relative;
+      overflow: hidden;
     }
-    section h2 {
-      margin: 0 0 10px 0;
-      font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em;
-      color: var(--dim);
+    .panel::before {
+      content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+      opacity: 0.4;
+    }
+    .panel h2 {
+      margin: 0 0 14px 0; font-size: 0.7rem; text-transform: uppercase;
+      letter-spacing: 0.25em; color: var(--cyan);
       display: flex; justify-content: space-between; align-items: baseline;
+      text-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
     }
-    section h2 .count {
-      color: var(--accent); font-size: 1rem; font-weight: bold;
-      letter-spacing: 0;
+    .panel h2 .count {
+      color: var(--text); font-size: 1.2rem; font-weight: 700;
+      letter-spacing: 0; text-shadow: 0 0 12px rgba(0, 180, 255, 0.6);
     }
-    .stats-grid {
+
+    /* ---- stat tiles ---- */
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px; margin-bottom: 18px;
+    }
+    .stat {
+      padding: 16px 18px; position: relative;
+      background: linear-gradient(135deg, rgba(0,100,255,0.10), rgba(0,180,255,0.03));
+      border: 1px solid rgba(0, 180, 255, 0.2);
+      border-radius: 8px;
+    }
+    .stat::after {
+      content: ""; position: absolute; bottom: 0; left: 12px; right: 12px;
+      height: 2px; border-radius: 2px;
+      background: linear-gradient(90deg, var(--blue), var(--cyan));
+      box-shadow: 0 0 8px var(--cyan);
+    }
+    .stat .label {
+      color: var(--dim); font-size: 0.68rem; letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+    .stat .value {
+      color: var(--text); font-size: 2.2rem; font-weight: 700;
+      margin-top: 6px; line-height: 1;
+      text-shadow: 0 0 14px rgba(0, 200, 255, 0.5);
+    }
+    .stat.alert .value { color: var(--red); text-shadow: 0 0 14px var(--red-glow); }
+    .stat .unit { color: var(--dim); font-size: 0.7rem; margin-left: 4px; }
+
+    /* ---- live traffic flow ---- */
+    .flow {
       grid-column: 1 / -1;
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 12px;
+      min-height: 240px;
+      padding: 0; margin-bottom: 18px;
+      position: relative;
     }
-    .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
-    .stat .label { color: var(--dim); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; }
-    .stat .value { color: var(--text); font-size: 1.6rem; font-weight: bold; margin-top: 4px; }
-    .stat .value.accent { color: var(--accent); }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th { color: var(--dim); font-weight: normal; text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
-    td { padding: 4px 6px; border-bottom: 1px solid #131915; vertical-align: top; }
-    td.r { text-align: right; }
-    td .pill { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
-    td .pill.pub { background: rgba(16,185,129,.15); color: #10b981; }
-    td .pill.exp { background: rgba(249,115,22,.15); color: #f97316; }
-    td .pill.priv { background: rgba(122,156,130,.15); color: var(--dim); }
-    td .pill.ok { background: rgba(57,255,122,.12); color: var(--accent); }
-    td .pill.warn { background: rgba(255,180,0,.15); color: var(--warn); }
-    td .pill.err { background: rgba(255,84,112,.15); color: var(--err); }
-    .empty { color: var(--dim); font-style: italic; padding: 8px 0; }
-    .req-list { max-height: 320px; overflow-y: auto; }
-    .req { display: grid; grid-template-columns: auto auto 1fr auto auto; gap: 8px; padding: 4px 6px; border-bottom: 1px solid #131915; align-items: center; }
-    .req .ts { color: var(--dim); font-size: 11px; }
-    .req .method { color: var(--dim); width: 38px; }
-    .req .path { font-family: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .req .ai { color: var(--ok); font-size: 11px; }
-    .req .lat { color: var(--dim); text-align: right; font-size: 11px; }
-    .req .status.x2 { color: var(--accent); }
-    .req .status.x4 { color: var(--warn); }
-    .req .status.x5 { color: var(--err); }
-    footer { padding: 16px 24px; color: var(--dim); font-size: 0.78rem; text-align: center; border-top: 1px solid var(--border); margin-top: 24px; }
-    .tag { color: var(--warn); }
-    code { background: #131915; padding: 1px 5px; border-radius: 3px; color: var(--text); font-size: 12px; }
-    .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; animation: pulse 1.4s ease-in-out infinite; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .flow .panel-inner { padding: 18px 20px; }
+    .flow svg {
+      display: block; width: 100%; height: 240px;
+    }
+    .lane-label {
+      fill: var(--cyan); font-family: inherit; font-size: 11px;
+      letter-spacing: 0.2em; text-transform: uppercase;
+    }
+    .node {
+      fill: rgba(0, 180, 255, 0.06);
+      stroke: var(--blue);
+      stroke-width: 1.5;
+      filter: drop-shadow(0 0 6px rgba(0, 180, 255, 0.5));
+    }
+    .node.active { fill: rgba(0, 240, 255, 0.18); stroke: var(--cyan); }
+    .node-label {
+      fill: var(--text); font-family: inherit; font-size: 11px; text-anchor: middle;
+    }
+    .lane {
+      stroke: rgba(0, 100, 200, 0.25);
+      stroke-width: 1; stroke-dasharray: 4 6;
+      fill: none;
+    }
+    .particle {
+      r: 5;
+      filter: drop-shadow(0 0 8px currentColor);
+    }
+    .particle.ok { fill: var(--cyan); color: var(--cyan); }
+    .particle.warn { fill: var(--amber); color: var(--amber); }
+    .particle.err { fill: var(--red); color: var(--red); }
+
+    /* ---- main grid below flow ---- */
+    .grid {
+      display: grid; grid-template-columns: 1.4fr 1fr;
+      gap: 18px;
+    }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+    /* ---- publisher cards ---- */
+    .pub-grid { display: grid; gap: 12px; }
+    .pub-card {
+      padding: 14px 16px; border-radius: 8px;
+      background: linear-gradient(135deg, rgba(0,255,149,0.06), rgba(0,180,255,0.03));
+      border: 1px solid rgba(0, 255, 149, 0.18);
+      position: relative;
+    }
+    .pub-card.idle { border-color: rgba(0, 180, 255, 0.12); }
+    .pub-card .header {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .pub-card .name {
+      font-weight: 700; color: var(--text); letter-spacing: 0.04em;
+      text-shadow: 0 0 8px rgba(0, 255, 149, 0.4);
+    }
+    .pub-card .desc { color: var(--dim); font-size: 0.78rem; margin-bottom: 8px; }
+    .pub-card .row {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+      font-size: 0.75rem;
+    }
+    .pub-card .row .k { color: var(--dim); display: block; font-size: 0.65rem;
+                       letter-spacing: 0.15em; text-transform: uppercase; }
+    .pub-card .row .v { color: var(--text); font-weight: 600; }
+
+    .activity-bar {
+      height: 4px; margin-top: 10px; border-radius: 2px; overflow: hidden;
+      background: rgba(0, 180, 255, 0.08); display: flex;
+    }
+    .activity-bar .seg {
+      height: 100%; transition: all 200ms ease;
+    }
+    .activity-bar .seg.ok { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+    .activity-bar .seg.err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+    /* ---- requests feed ---- */
+    .feed {
+      max-height: 380px; overflow-y: auto; padding-right: 4px;
+    }
+    .feed::-webkit-scrollbar { width: 4px; }
+    .feed::-webkit-scrollbar-thumb { background: var(--blue); border-radius: 4px; }
+    .req {
+      display: grid; grid-template-columns: auto auto 1fr auto;
+      gap: 10px; padding: 7px 10px; align-items: center;
+      border-left: 2px solid var(--cyan);
+      margin-bottom: 4px;
+      background: rgba(0, 50, 120, 0.15);
+      border-radius: 0 6px 6px 0;
+      animation: slidein 320ms ease-out;
+      font-size: 11.5px;
+    }
+    @keyframes slidein {
+      from { opacity: 0; transform: translateX(-10px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    .req.x4 { border-left-color: var(--amber); }
+    .req.x5 { border-left-color: var(--red); background: rgba(255, 40, 96, 0.08); }
+    .req .ts { color: var(--dim); font-size: 10.5px; }
+    .req .method { color: var(--dim); }
+    .req .path { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .req .meta { color: var(--dim); font-size: 10.5px; text-align: right; white-space: nowrap; }
+    .req .meta .status { color: var(--cyan); font-weight: 700; }
+    .req.x4 .meta .status { color: var(--amber); }
+    .req.x5 .meta .status { color: var(--red); }
+
+    .empty { color: var(--dim); font-style: italic; padding: 12px 0; text-align: center; }
+
+    .exp-card {
+      padding: 10px 12px; border-radius: 6px;
+      background: linear-gradient(135deg, rgba(255,138,0,0.10), rgba(0,180,255,0.03));
+      border: 1px solid rgba(255, 138, 0, 0.25);
+      margin-bottom: 8px;
+    }
+    .exp-card .name { color: var(--text); font-weight: 600; }
+    .exp-card .caps { color: var(--exp); font-size: 0.72rem; margin-top: 2px; }
+    .exp-card .meta { color: var(--dim); font-size: 0.7rem; margin-top: 4px; }
+
+    .pill {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase;
+    }
+    .pill.pub { background: rgba(0,255,149,0.15); color: var(--green); }
+    .pill.priv { background: rgba(122,156,130,0.12); color: var(--dim); }
+    .pill.exp { background: rgba(255,138,0,0.15); color: var(--exp); }
+
+    footer {
+      margin-top: 40px; padding: 20px 32px;
+      border-top: 1px solid var(--glass-edge);
+      color: var(--dim); font-size: 0.75rem; text-align: center;
+      letter-spacing: 0.1em;
+      position: relative; z-index: 2;
+    }
+    code {
+      background: rgba(0, 180, 255, 0.08); padding: 2px 6px;
+      border-radius: 3px; color: var(--cyan); font-size: 12px;
+    }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1><span class="live-dot"></span>zhub <span class="tag">operator dashboard</span></h1>
+      <h1><span class="pulse"></span>ZHUB <span class="tag">LIVE OPERATOR DECK</span></h1>
       <div class="meta">
-        <span id="hub-id">hub …</span> ·
-        <span id="uptime">uptime …</span> ·
-        <a href="/healthz">healthz</a> ·
-        <a href="/metrics">metrics</a> ·
-        <a href="/entity">entity</a> ·
+        <span id="hub-id">hub …</span>
+        <span id="uptime">· uptime …</span>
+        <a href="/healthz">healthz</a>
+        <a href="/metrics">metrics</a>
+        <a href="/entity">entity</a>
+        <a href="/api/dashboard">api</a>
         <a href="/registry">registry</a>
       </div>
     </div>
-    <div class="meta">auto-refresh 3s</div>
+    <div class="meta" style="text-align: right;">
+      <div>auto-refresh <span style="color: var(--cyan)">2s</span></div>
+      <div id="connection-state">● link</div>
+    </div>
   </header>
 
   <main>
-    <div class="stats-grid">
-      <div class="stat"><div class="label">publishers</div><div id="s-pub" class="value accent">0</div></div>
-      <div class="stat"><div class="label">connections</div><div id="s-conn" class="value">0</div></div>
-      <div class="stat"><div class="label">exposures</div><div id="s-exp" class="value">0</div></div>
-      <div class="stat"><div class="label">peers</div><div id="s-peers" class="value">0</div></div>
-      <div class="stat"><div class="label">total chats</div><div id="s-chats" class="value">0</div></div>
-      <div class="stat"><div class="label">avg latency</div><div id="s-lat" class="value">0<span style="font-size:0.7rem;color:var(--dim)"> ms</span></div></div>
+
+    <div class="stats">
+      <div class="stat"><div class="label">Publishers</div><div id="s-pub" class="value">0</div></div>
+      <div class="stat"><div class="label">Connections</div><div id="s-conn" class="value">0</div></div>
+      <div class="stat"><div class="label">Exposures</div><div id="s-exp" class="value">0</div></div>
+      <div class="stat"><div class="label">Peers</div><div id="s-peers" class="value">0</div></div>
+      <div class="stat"><div class="label">Total Chats</div><div id="s-chats" class="value">0</div></div>
+      <div class="stat" id="s-p95-tile"><div class="label">P95 Latency</div><div id="s-p95" class="value">0<span class="unit">ms</span></div></div>
     </div>
 
-    <section>
-      <h2>publishers <span class="count" id="pub-count">0</span></h2>
-      <table>
-        <thead><tr><th>name</th><th>brain · description</th><th class="r">chats</th><th class="r">avg ms</th><th class="r">p95 / p99 / max</th><th class="r">conns</th><th>uptime</th></tr></thead>
-        <tbody id="pub-table"><tr><td colspan="7" class="empty">no publishers registered</td></tr></tbody>
-      </table>
-    </section>
+    <div class="panel flow">
+      <div class="panel-inner">
+        <h2>live traffic <span class="count" id="flow-count">0/min</span></h2>
+        <svg viewBox="0 0 1000 220" preserveAspectRatio="xMidYMid meet">
+          <!-- lane labels -->
+          <text x="100" y="22" class="lane-label" text-anchor="middle">CLIENTS</text>
+          <text x="500" y="22" class="lane-label" text-anchor="middle">HUB CORE</text>
+          <text x="900" y="22" class="lane-label" text-anchor="middle">PUBLISHERS · EXPOSURES</text>
 
-    <section>
-      <h2>exposures <span class="count" id="exp-count">0</span></h2>
-      <table>
-        <thead><tr><th>name</th><th>capabilities</th><th>uptime</th><th>visibility</th></tr></thead>
-        <tbody id="exp-table"><tr><td colspan="4" class="empty">no exposures registered</td></tr></tbody>
-      </table>
-    </section>
+          <!-- path lanes (dashed) -->
+          <path d="M 180 110 Q 340 110 460 110" class="lane"/>
+          <path d="M 540 110 Q 660 110 820 110" class="lane"/>
+          <!-- side lanes for connections / exposures -->
+          <path d="M 180 60 Q 340 80 460 95" class="lane"/>
+          <path d="M 540 95 Q 660 80 820 60" class="lane"/>
+          <path d="M 180 160 Q 340 140 460 125" class="lane"/>
+          <path d="M 540 125 Q 660 140 820 160" class="lane"/>
 
-    <section style="grid-column: 1 / -1;">
-      <h2>recent requests <span class="count" id="req-count">0</span></h2>
-      <div id="req-list" class="req-list"><div class="empty">no requests yet</div></div>
-    </section>
+          <!-- node: clients (left) -->
+          <rect x="40" y="65" width="120" height="90" rx="8" class="node"/>
+          <text x="100" y="105" class="node-label" style="font-weight:600">BYOK CLIENTS</text>
+          <text x="100" y="122" class="node-label" style="fill:var(--dim);font-size:9px">Pocket · Cursor · MCP</text>
+          <text x="100" y="138" class="node-label" style="fill:var(--dim);font-size:9px">curl · openai-py</text>
 
-    <section style="grid-column: 1 / -1;">
-      <h2>federation <span class="count" id="peer-count">0</span></h2>
-      <div id="peer-list"><div class="empty">no peers configured (set <code>ZHUB_PEERS</code> env var)</div></div>
-    </section>
+          <!-- node: hub (center) -->
+          <rect x="430" y="55" width="140" height="110" rx="10" class="node active"/>
+          <text x="500" y="100" class="node-label" style="font-weight:700;font-size:14px">HUB</text>
+          <text x="500" y="118" class="node-label" style="fill:var(--cyan);font-size:9px" id="hub-id-svg">…</text>
+          <circle cx="500" cy="135" r="6" fill="var(--cyan)" filter="url(#glow)">
+            <animate attributeName="opacity" values="1;0.3;1" dur="1.6s" repeatCount="indefinite"/>
+          </circle>
+
+          <!-- node: publishers/exposures (right) -->
+          <rect x="840" y="65" width="120" height="90" rx="8" class="node"/>
+          <text x="900" y="105" class="node-label" style="font-weight:600">PUBLISHERS</text>
+          <text x="900" y="122" class="node-label" style="fill:var(--dim);font-size:9px">+ EXPOSURES</text>
+          <text x="900" y="138" class="node-label" style="fill:var(--dim);font-size:9px" id="svg-pub-count">0 online</text>
+
+          <defs>
+            <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="3" result="blur"/>
+              <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+
+          <!-- particles container -->
+          <g id="particles"></g>
+        </svg>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <div class="panel" style="margin-bottom: 18px;">
+          <h2>publishers <span class="count" id="pub-count">0</span></h2>
+          <div id="pub-grid" class="pub-grid">
+            <div class="empty">no publishers registered</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>exposures <span class="count" id="exp-count">0</span></h2>
+          <div id="exp-grid">
+            <div class="empty">no exposures registered</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel" style="margin-bottom: 18px;">
+          <h2>recent requests <span class="count" id="req-count">0</span></h2>
+          <div id="feed" class="feed">
+            <div class="empty">no requests yet</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>federation <span class="count" id="peer-count">0</span></h2>
+          <div id="peer-list">
+            <div class="empty">no peers configured (set <code>ZHUB_PEERS</code> env)</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </main>
 
   <footer>
-    zhub · WiFi for AIs · <a href="https://github.com/Zawwarsami16/zhub">github.com/Zawwarsami16/zhub</a>
+    zhub · WiFi for AIs · <a href="https://github.com/Zawwarsami16/zhub">github.com/Zawwarsami16/zhub</a> · MIT
   </footer>
 
   <script>
     const $ = (id) => document.getElementById(id);
+    let prevReqIds = new Set();
+    let perMinuteCounter = [];
+
     function fmtUptime(s) {
       if (s < 60) return s + "s";
       if (s < 3600) return Math.floor(s/60) + "m " + (s%60) + "s";
@@ -165,18 +446,58 @@
       return d.toLocaleTimeString([], {hour12: false});
     }
     function statusClass(code) {
-      if (code >= 500) return "status x5";
-      if (code >= 400) return "status x4";
-      return "status x2";
+      if (code >= 500) return "x5";
+      if (code >= 400) return "x4";
+      return "x2";
     }
+    function escape(s) { return String(s).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c])); }
+
+    function spawnParticle(status, delay = 0) {
+      const svg = document.querySelector("svg");
+      const ns = "http://www.w3.org/2000/svg";
+      const cls = status >= 500 ? "err" : status >= 400 ? "warn" : "ok";
+      // path: clients(100, ~110) → hub(500, 110) → publishers(900, ~110)
+      const p = document.createElementNS(ns, "circle");
+      p.setAttribute("class", "particle " + cls);
+      p.setAttribute("r", "5");
+      const yJitter = (Math.random() - 0.5) * 30;
+      p.setAttribute("cx", "180");
+      p.setAttribute("cy", String(110 + yJitter));
+      $("particles").appendChild(p);
+      // animate to hub center, then to publisher
+      setTimeout(() => {
+        p.style.transition = "all 800ms cubic-bezier(.4,0,.2,1)";
+        p.setAttribute("cx", "500");
+        p.setAttribute("cy", "110");
+      }, 10 + delay);
+      setTimeout(() => {
+        p.style.transition = "all 800ms cubic-bezier(.4,0,.2,1)";
+        p.setAttribute("cx", "820");
+        p.setAttribute("cy", String(110 + yJitter));
+      }, 820 + delay);
+      setTimeout(() => {
+        p.style.transition = "opacity 200ms";
+        p.style.opacity = "0";
+      }, 1620 + delay);
+      setTimeout(() => p.remove(), 1820 + delay);
+    }
+
     async function refresh() {
       try {
         const r = await fetch("/api/dashboard");
-        if (!r.ok) return;
+        if (!r.ok) {
+          $("connection-state").style.color = "var(--red)";
+          $("connection-state").textContent = "✖ connection";
+          return;
+        }
+        $("connection-state").style.color = "var(--green)";
+        $("connection-state").textContent = "● link";
+
         const d = await r.json();
 
         $("hub-id").textContent = "hub " + d.hub_id;
-        $("uptime").textContent = "uptime " + fmtUptime(d.uptime_seconds);
+        $("hub-id-svg").textContent = d.hub_id;
+        $("uptime").textContent = "· uptime " + fmtUptime(d.uptime_seconds);
 
         $("s-pub").textContent = d.publishers.length;
         $("s-conn").textContent = d.connections_total;
@@ -186,74 +507,92 @@
         $("exp-count").textContent = d.exposures.length;
         $("peer-count").textContent = d.peers.length;
         $("req-count").textContent = d.recent_requests.length;
+        $("svg-pub-count").textContent = (d.publishers.length + d.exposures.length) + " online";
 
-        // total chats + avg latency aggregate
-        let chats = 0, latSum = 0, latCount = 0;
+        let chats = 0, p95Max = 0;
         for (const name of Object.keys(d.by_ai)) {
           const e = d.by_ai[name];
           chats += (e.chat_requests || 0);
-          if (e.request_count) {
-            latSum += (e.total_latency_ms || 0);
-            latCount += e.request_count;
-          }
+          if ((e.p95_latency_ms || 0) > p95Max) p95Max = e.p95_latency_ms;
         }
-        $("s-chats").textContent = chats;
-        $("s-lat").innerHTML = (latCount ? Math.floor(latSum / latCount) : 0)
-                              + '<span style="font-size:0.7rem;color:var(--dim)"> ms</span>';
+        $("s-chats").textContent = chats.toLocaleString();
+        $("s-p95").innerHTML = p95Max + '<span class="unit">ms</span>';
+        $("s-p95-tile").classList.toggle("alert", p95Max > 2000);
 
-        // publishers table
+        // detect new requests + spawn particles for them
+        const currentIds = new Set(d.recent_requests.map(r => `${r.ts}-${r.path}-${r.status}`));
+        const newOnes = d.recent_requests.filter(r => !prevReqIds.has(`${r.ts}-${r.path}-${r.status}`));
+        newOnes.slice(-8).forEach((r, i) => spawnParticle(r.status, i * 80));
+        prevReqIds = currentIds;
+
+        // requests/min indicator
+        const now = Date.now() / 1000;
+        perMinuteCounter = perMinuteCounter.filter(t => now - t < 60);
+        newOnes.forEach(() => perMinuteCounter.push(now));
+        $("flow-count").textContent = perMinuteCounter.length + "/min";
+
+        // publishers
         if (d.publishers.length === 0) {
-          $("pub-table").innerHTML =
-            '<tr><td colspan="7" class="empty">no publishers registered</td></tr>';
+          $("pub-grid").innerHTML = '<div class="empty">no publishers registered</div>';
         } else {
-          $("pub-table").innerHTML = d.publishers.map(p => {
+          $("pub-grid").innerHTML = d.publishers.map(p => {
             const m = d.by_ai[p.name] || {};
-            const desc = p.description || '';
+            const total = m.chat_requests || 0;
+            const errs = m.rate_limited || 0;
+            const okPct = total > 0 ? Math.max(2, 100 * (total - errs) / total) : 0;
             const visPill = p.public
               ? '<span class="pill pub">public</span>'
               : '<span class="pill priv">private</span>';
-            return `<tr>
-              <td><strong>${p.name}</strong> ${visPill}</td>
-              <td><small>${desc.replace(/</g, "&lt;")}</small></td>
-              <td class="r">${m.chat_requests || 0}</td>
-              <td class="r">${m.avg_latency_ms || 0}</td>
-              <td class="r"><small>${m.p95_latency_ms || 0} / ${m.p99_latency_ms || 0} / ${m.max_latency_ms || 0}</small></td>
-              <td class="r">${p.connections}</td>
-              <td><small>${fmtUptime(p.uptime_seconds)}</small></td>
-            </tr>`;
+            const idleClass = total === 0 ? ' idle' : '';
+            return `
+              <div class="pub-card${idleClass}">
+                <div class="header">
+                  <div class="name">${escape(p.name)} ${visPill}</div>
+                  <div style="color:var(--dim);font-size:0.75rem">${fmtUptime(p.uptime_seconds)}</div>
+                </div>
+                <div class="desc">${escape(p.description || '—')}</div>
+                <div class="row">
+                  <div><span class="k">chats</span><span class="v">${total.toLocaleString()}</span></div>
+                  <div><span class="k">avg ms</span><span class="v">${m.avg_latency_ms || 0}</span></div>
+                  <div><span class="k">p95 ms</span><span class="v">${m.p95_latency_ms || 0}</span></div>
+                  <div><span class="k">conns</span><span class="v">${p.connections}</span></div>
+                </div>
+                <div class="activity-bar">
+                  <div class="seg ok" style="width:${okPct}%"></div>
+                  <div class="seg err" style="width:${100-okPct}%"></div>
+                </div>
+              </div>`;
           }).join("");
         }
 
-        // exposures table
+        // exposures
         if (d.exposures.length === 0) {
-          $("exp-table").innerHTML =
-            '<tr><td colspan="4" class="empty">no exposures registered</td></tr>';
+          $("exp-grid").innerHTML = '<div class="empty">no exposures registered</div>';
         } else {
-          $("exp-table").innerHTML = d.exposures.map(e => {
+          $("exp-grid").innerHTML = d.exposures.map(e => {
             const visPill = e.public
               ? '<span class="pill exp">discoverable</span>'
               : '<span class="pill priv">private</span>';
-            return `<tr>
-              <td><strong>${e.name}</strong></td>
-              <td><small>${e.capabilities.join(", ") || '—'}</small></td>
-              <td><small>${fmtUptime(e.uptime_seconds)}</small></td>
-              <td>${visPill}</td>
-            </tr>`;
+            return `
+              <div class="exp-card">
+                <div class="name">${escape(e.name)} ${visPill}</div>
+                <div class="caps">${e.capabilities.join(" · ") || '—'}</div>
+                <div class="meta">${fmtUptime(e.uptime_seconds)} · ${escape(e.exposure_id)}</div>
+              </div>`;
           }).join("");
         }
 
-        // recent requests (newest first)
+        // recent feed
         if (d.recent_requests.length === 0) {
-          $("req-list").innerHTML = '<div class="empty">no requests yet</div>';
+          $("feed").innerHTML = '<div class="empty">no requests yet</div>';
         } else {
           const reversed = d.recent_requests.slice().reverse();
-          $("req-list").innerHTML = reversed.map(r => `
-            <div class="req">
+          $("feed").innerHTML = reversed.map(r => `
+            <div class="req ${statusClass(r.status)}">
               <span class="ts">${fmtTime(r.ts)}</span>
               <span class="method">${r.method}</span>
-              <span class="path">${r.path.replace(/</g, "&lt;")}</span>
-              <span class="ai">${r.ai ? "ai=" + r.ai : ""}</span>
-              <span class="${statusClass(r.status)}">${r.status} <span class="lat">${r.latency_ms}ms</span></span>
+              <span class="path">${escape(r.path)}${r.ai ? ' <span style="color:var(--cyan)">· ' + escape(r.ai) + '</span>' : ''}</span>
+              <span class="meta"><span class="status">${r.status}</span> · ${r.latency_ms}ms</span>
             </div>
           `).join("");
         }
@@ -261,10 +600,10 @@
         // peers
         if (d.peers.length === 0) {
           $("peer-list").innerHTML =
-            '<div class="empty">no peers configured (set <code>ZHUB_PEERS</code> env var)</div>';
+            '<div class="empty">no peers configured (set <code>ZHUB_PEERS</code> env)</div>';
         } else {
           $("peer-list").innerHTML = d.peers.map(u =>
-            `<div><a href="${u}">${u}</a></div>`
+            `<div style="margin:6px 0;"><span style="color:var(--blue);margin-right:8px">▸</span><a href="${u}">${escape(u)}</a></div>`
           ).join("");
         }
       } catch (err) {
@@ -272,7 +611,7 @@
       }
     }
     refresh();
-    setInterval(refresh, 3000);
+    setInterval(refresh, 2000);
   </script>
 </body>
 </html>
