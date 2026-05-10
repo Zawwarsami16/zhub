@@ -136,9 +136,48 @@ async def main() -> None:
     )
     while not pub.api_key:
         await asyncio.sleep(0.05)
+
+    # Try to discover the hub's public URL so we can print a copy-paste-
+    # ready endpoint. Falls back to the local hub URL when the hub has no
+    # tunnel up. Best-effort — if /hub/identity fails or httpx isn't
+    # installed, we just print local. Either way the publisher is ready.
+    public_endpoint = None
+    try:
+        import httpx
+        http_hub = args.hub.replace("ws://", "http://").replace("wss://", "https://")
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            r = await c.get(http_hub.rstrip("/") + "/hub/identity")
+            if r.status_code == 200:
+                pub_url = r.json().get("public_url") or http_hub
+                public_endpoint = pub_url.rstrip("/") + f"/{pub.name}/v1"
+    except Exception:
+        public_endpoint = args.hub.replace("ws://", "http://") \
+            .replace("wss://", "https://").rstrip("/") + f"/{pub.name}/v1"
+
+    # Machine-readable lines (parseable by scripts / supervisord / tests)
+    # come first; the pretty operator box follows underneath.
     print(f"name={pub.name}", flush=True)
     print(f"key={pub.api_key}", flush=True)
+    print(f"url={public_endpoint}", flush=True)
     print("ready", flush=True)
+
+    bar = "=" * 64
+    print()
+    print(bar, flush=True)
+    print(f"  zhub publisher live  ·  brain: {brain.label}")
+    print(bar)
+    print(f"  URL:  {public_endpoint}")
+    print(f"  KEY:  {pub.api_key}")
+    print(bar)
+    print(f"  curl example:")
+    print(f"    curl -X POST {public_endpoint}/chat/completions \\")
+    print(f"      -H 'Authorization: Bearer {pub.api_key}' \\")
+    print(f"      -H 'Content-Type: application/json' \\")
+    print(f"      -d '{{\"messages\":[{{\"role\":\"user\",\"content\":\"hi\"}}]}}'")
+    print(bar)
+    print(f"  paste URL+KEY into Pocket / Cursor / Claude Desktop.")
+    print(f"  ctrl+c to stop.")
+    print()
     await asyncio.Event().wait()
 
 

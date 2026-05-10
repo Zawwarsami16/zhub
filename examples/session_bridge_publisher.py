@@ -150,6 +150,21 @@ async def main():
     while not pub.api_key:
         await asyncio.sleep(0.05)
 
+    # Discover hub's public URL (cloudflared etc) so the printed endpoint
+    # is copy-paste-ready, not just name+key.
+    public_endpoint = None
+    try:
+        import httpx
+        http_hub = args.hub.replace("ws://", "http://").replace("wss://", "https://")
+        async with httpx.AsyncClient(timeout=3.0) as c:
+            r = await c.get(http_hub.rstrip("/") + "/hub/identity")
+            if r.status_code == 200:
+                pub_url = r.json().get("public_url") or http_hub
+                public_endpoint = pub_url.rstrip("/") + f"/{pub.name}/v1"
+    except Exception:
+        public_endpoint = args.hub.replace("ws://", "http://") \
+            .replace("wss://", "https://").rstrip("/") + f"/{pub.name}/v1"
+
     print()
     print("=" * 64)
     print(f"  session bridge live")
@@ -157,6 +172,7 @@ async def main():
     print(f"  inbox:       {args.inbox}/")
     print(f"  outbox:      {args.outbox}/")
     print(f"  timeout:     {args.timeout}s per reply")
+    print(f"  URL:         {public_endpoint}")
     print(f"  KEY:         {pub.api_key}")
     print("=" * 64)
     print()

@@ -193,6 +193,11 @@ class Hub:
         self.identity = HubIdentity(storage=storage)
         # cache of peer hub_url → public_key_hex from /hub/identity probes
         self._peer_pubkey_cache: dict[str, str] = {}
+        # Public URL of this hub (the cloudflared / named-tunnel address)
+        # if one was started alongside the server. Set by the --public-tunnel
+        # path in main(). Publishers / dashboards / chat client read this
+        # via /hub/identity to print copy-paste-ready endpoints.
+        self.public_url: str = ""
 
     def bump(self, ai_name: str, key: str, delta: int = 1) -> None:
         self.metrics[ai_name][key] += delta
@@ -640,6 +645,9 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             "version": "1",
             "signed": hub.identity.available,
             "public_key": hub.identity.public_key_hex(),
+            # Empty string when no public tunnel was started — clients
+            # interpret that as "use whatever URL you reached me on".
+            "public_url": hub.public_url,
         })
 
     # --- entity (zhub's self-knowledge layer) -----------------------------
@@ -1537,7 +1545,19 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         if ai_name not in hub.publishers:
             peer_url = await _find_peer_for(ai_name)
             if peer_url is None:
-                raise HTTPException(404, f"AI '{ai_name}' not found locally or in peers")
+                known = sorted(hub.publishers.keys())
+                hint = (f"known publishers on this hub: {known}. "
+                        "is your publisher process still running and "
+                        "connected? check its terminal for the 'ready' "
+                        "line, or run `python -m zhub status <hub-url>` "
+                        "to see live state.") if known else (
+                        "no publishers are connected to this hub yet. "
+                        "start one (e.g. `python examples/multi_brain_publisher.py "
+                        f"--name {ai_name} --brain groq`) and retry.")
+                raise HTTPException(
+                    404,
+                    f"AI '{ai_name}' not found locally or in peers — {hint}",
+                )
             hub.bump(ai_name, "peer_proxied")
             return await _proxy_to_peer(
                 peer_url, ai_name, body, api_key_header,
@@ -2212,8 +2232,13 @@ def main() -> None:
                     print(f"  zhub public URL:  {url}")
                     print("=" * 60)
                     print()
+                    app = create_app(db_path=db_path)
+                    # Make the public URL discoverable to publishers + clients
+                    # via /hub/identity. Without this they'd have to scrape
+                    # the hub's stdout to learn the tunnel address.
+                    app.state.hub.public_url = url
                     config = uvicorn.Config(
-                        create_app(db_path=db_path), host=args.host, port=args.port,
+                        app, host=args.host, port=args.port,
                         log_level=args.log_level,
                     )
                     server = uvicorn.Server(config)
