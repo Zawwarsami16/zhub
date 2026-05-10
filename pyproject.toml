@@ -4,20 +4,25 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zhub"
-version = "0.1.0"
-description = "WiFi for AIs — drop-in skill that lets any AI publish a discoverable, controllable endpoint."
+version = "0.2.0"
+description = "WiFi for AIs — substrate that lets any AI publish a discoverable, OpenAI-compat endpoint reachable from anywhere."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Zawwar Sami", email = "zawwarsami16@gmail.com" }]
-keywords = ["ai", "agent", "endpoint", "tunnel", "openai-compatible", "mcp"]
+keywords = ["ai", "agent", "endpoint", "tunnel", "openai-compatible", "mcp", "llm", "claude", "ollama", "groq"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Communications :: Chat",
+    "Framework :: AsyncIO",
+    "Operating System :: OS Independent",
 ]
 
 dependencies = [
@@ -49,6 +54,7 @@ Repository = "https://github.com/Zawwarsami16/zhub"
 Issues = "https://github.com/Zawwarsami16/zhub/issues"
 
 [project.scripts]
+zhub = "zhub.__main__:main"
 zhub-server = "zhub.server:main"
 
 [tool.hatch.build.targets.wheel]

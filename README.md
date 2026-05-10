@@ -7,7 +7,9 @@
 [![CI](https://github.com/Zawwarsami16/zhub/actions/workflows/ci.yml/badge.svg)](https://github.com/Zawwarsami16/zhub/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-141%2F141-brightgreen)](#tests)
+[![Tests](https://img.shields.io/badge/tests-164%20%2B%2013-brightgreen)](#tests)
+[![Brains](https://img.shields.io/badge/brains-8-cyan)](#performance)
+[![Version](https://img.shields.io/badge/version-0.2.0-orange)](CHANGELOG.md)
 
 </div>
 
@@ -18,8 +20,10 @@
 ```bash
 git clone https://github.com/Zawwarsami16/zhub && cd zhub
 pip install -e '.[server,brains]'
-GROQ_API_KEY=gsk_... python -m zhub up
+GROQ_API_KEY=gsk_... zhub up
 ```
+
+(`zhub up` is the installed CLI; `python -m zhub up` is the equivalent module form when the script isn't on PATH.)
 
 Output:
 
