@@ -887,6 +887,100 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         ]
         return JSONResponse(m)
 
+    async def _run_autoresolve_loop(
+        ai_name: str,
+        initial_messages: list[dict[str, Any]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        tools: Optional[list[dict[str, Any]]],
+        tool_choice: Any,
+        tool_resolve_mode: str,
+        max_iters: int = 4,
+    ) -> tuple[str, Optional[str]]:
+        """Run the same tool-call auto-resolve loop the non-streaming chat
+        path uses, returning (final_text, finish_reason). Used by Phase 4.2's
+        pre-resolve streaming mode so streaming clients can opt into proper
+        tool-call resolution. Side-effects: capability invocations + metrics
+        bumps happen as the loop runs."""
+        running_messages = list(initial_messages)
+        iters = 0
+        while True:
+            try:
+                response = await hub.proxy_chat(
+                    ai_name, running_messages, model, temperature, max_tokens,
+                    tools=tools or None, tool_choice=tool_choice,
+                )
+            except LookupError:
+                raise HTTPException(404, "AI offline")
+            except asyncio.TimeoutError:
+                raise HTTPException(504, "AI did not respond in time")
+
+            tool_calls = response.get("tool_calls") or []
+            if not tool_calls or tool_resolve_mode == "client" or iters >= max_iters:
+                return (response.get("text", "") or "",
+                        response.get("finish_reason"))
+
+            running_messages = running_messages + [{
+                "role": "assistant",
+                "content": response.get("text", "") or None,
+                "tool_calls": tool_calls,
+            }]
+
+            async def _resolve_one(tc: Any) -> dict[str, Any]:
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                cap_name = fn.get("name", "")
+                args_raw = fn.get("arguments", "{}")
+                try:
+                    args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                except (ValueError, TypeError):
+                    args = {}
+                conn_id = hub.find_capability_connection(ai_name, cap_name)
+                if conn_id is None:
+                    tool_result: Any = {"error": f"capability '{cap_name}' not connected"}
+                else:
+                    schema = hub.find_capability_schema(ai_name, cap_name)
+                    val_errors = validate_schema(args, schema) if schema else []
+                    if val_errors:
+                        return {
+                            "tool_call_id": tc.get("id") if isinstance(tc, dict) else None,
+                            "name": cap_name,
+                            "args": args,
+                            "result": {"error": "validation failed: " + "; ".join(val_errors)},
+                        }
+                    try:
+                        relayed = await hub.invoke_capability(
+                            ai_name, conn_id, cap_name, args,
+                        )
+                        if isinstance(relayed, dict) and "ok" in relayed:
+                            if relayed.get("ok"):
+                                tool_result = relayed.get("result")
+                                if tool_result is None:
+                                    tool_result = {"ok": True}
+                            else:
+                                tool_result = {"error": relayed.get("error") or "invoke failed"}
+                        else:
+                            tool_result = relayed
+                    except Exception as e:
+                        tool_result = {"error": str(e)}
+                return {
+                    "tool_call_id": tc.get("id") if isinstance(tc, dict) else None,
+                    "name": cap_name,
+                    "args": args,
+                    "result": tool_result,
+                }
+
+            resolved = await asyncio.gather(*(_resolve_one(tc) for tc in tool_calls))
+            for entry in resolved:
+                hub.bump(ai_name, "tool_calls_resolved")
+                running_messages.append({
+                    "role": "tool",
+                    "tool_call_id": entry["tool_call_id"],
+                    "name": entry["name"],
+                    "content": json.dumps(entry["result"]),
+                })
+            iters += 1
+
     @app.post("/{ai_name}/v1/invoke")
     async def invoke_capability_http(ai_name: str, request: Request):
         """Direct HTTP invocation of a connected client's capability.
@@ -1007,6 +1101,59 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         tool_choice = body.get("tool_choice")
 
         if stream:
+            stream_tools_mode = request.headers.get("x-zhub-stream-tools", "").lower()
+            if stream_tools_mode == "pre-resolve":
+                # Phase 4.2: run the full non-streaming auto-resolve loop,
+                # then emit the final text as a single SSE chunk + done.
+                # Trades stream-latency for tool-call correctness when the
+                # client has opted in via header.
+                tool_resolve_mode = request.headers.get("x-zhub-tool-resolve", "auto").lower()
+                final_text, final_finish = await _run_autoresolve_loop(
+                    ai_name=ai_name,
+                    initial_messages=messages,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    tools=merged_tools or None,
+                    tool_choice=tool_choice,
+                    tool_resolve_mode=tool_resolve_mode,
+                )
+
+                async def preresolved_stream():
+                    created = int(time.time())
+                    completion_id = "chatcmpl-" + new_request_id()[:16]
+                    sse = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": final_text},
+                            "finish_reason": None,
+                        }],
+                    }
+                    yield f"data: {json.dumps(sse)}\n\n"
+                    sse_done = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": final_finish or "stop",
+                        }],
+                    }
+                    yield f"data: {json.dumps(sse_done)}\n\n"
+                    yield "data: [DONE]\n\n"
+
+                return StreamingResponse(
+                    preresolved_stream(),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
+
             try:
                 response = await hub.proxy_chat(
                     ai_name, messages, model, temperature, max_tokens, stream=True,

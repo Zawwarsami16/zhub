@@ -86,8 +86,9 @@ Tests: `pytest -v`. The e2e tests spin up the hub in-process and run the full pu
 - **Phase 3.0b** ✅ — `X-Zhub-Entity-Hint` header on 4xx/5xx responses pointing at `/entity/errors/<code>`. Closes the entity loop: any AI hitting an error gets a self-debug pointer.
 - **Phase 4.0** ✅ — `zhub/brains/` package: `BrainAdapter` ABC + four streaming adapters (Ollama, Groq, OpenAI, Cerebras). `detect()` walks them in priority order. `examples/multi_brain_publisher.py` exposes `--brain auto|ollama|groq|openai|cerebras` so the brain underneath any zhub publisher is one CLI flag away from a swap. External clients (Pocket/Loki/curl/MCP) see no change; key stays stable across brain swaps via persistence.
 - **Phase 4.1** ✅ — Entity v2: operator-extensible. `POST/GET /entity/extend` and `DELETE /entity/extend/{id}` (auth: any registered publisher's bearer key). Extensions persist in SQLite (`entity_extensions` table), surface inline in `/entity/<section>` and at the title-matched code under `/entity/errors/<code>`, and live alongside shipped recipes (shipped wins on canonical conflicts). Caps: 8KB per body, 200 per hub. Each hub now grows its own institutional memory.
+- **Phase 4.2** ✅ — Pre-resolve streaming mode for tool calls. Header `X-Zhub-Stream-Tools: pre-resolve` + `stream:true` runs the full non-streaming auto-resolve loop internally, then emits the resolved final text as one SSE chunk + done. Trades stream-latency for tool-call correctness in streaming mode. The non-streaming auto-resolve loop is now a shared helper (`_run_autoresolve_loop`) used by both code paths. True per-token tool_call delta passthrough = future Phase 4.2b (needs brain-adapter + publisher-SDK changes to surface tool_call deltas).
 
-**Next (not started):** tool streaming via SSE (Phase 1.8c — would need to detect tool_calls during stream and pause), multi-tier API keys, real ZAI integration via `zai_publish.py`.
+**Next (not started):** real ZAI integration via `zai_publish.py`, multi-tier API keys, full tool_call streaming (4.2b), MCP resources/prompts surface.
 
 ## 6. File layout (what's where)
 

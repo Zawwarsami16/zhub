@@ -193,9 +193,14 @@ returns final text. You get one round-trip externally even if the LLM
 took multiple internal turns.
 
 ### **Streaming for long responses**
-Add `"stream": true`. Hub returns OpenAI SSE chunks. Note: tool calls
-aren't streamed today (Phase 1.8c) — non-streaming path auto-resolves
-them; streaming path returns them in the final chunk.
+Add `"stream": true`. Hub returns OpenAI SSE chunks. Tool calls in
+streaming mode: by default the SSE stream just forwards text chunks
+(no tool resolution). Opt in to **pre-resolve mode** with
+`X-Zhub-Stream-Tools: pre-resolve` and the hub will run the full
+non-streaming auto-resolve loop internally, then emit the resolved
+final text as one SSE chunk + done. Trades stream-latency for tool
+correctness; useful when the brain might emit `tool_calls` and you
+want the resolved answer over SSE.
 
 ### **Cross-hub federation**
 Configure `ZHUB_PEERS=http://hub-b.example.com,http://hub-c.example.com`
