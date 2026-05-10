@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>zhub · operator dashboard</title>
+  <style>
+    :root {
+      --bg: #0a0e0a;
+      --panel: #0f1310;
+      --border: #1f2d24;
+      --text: #d9f2da;
+      --dim: #7a9c82;
+      --accent: #39ff7a;
+      --warn: #ffb400;
+      --err: #ff5470;
+      --ok: #5ac8fa;
+      --pub: #10b981;
+      --conn: #a855f7;
+      --exp: #f97316;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg); color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px; line-height: 1.5;
+    }
+    a { color: var(--ok); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: baseline; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px;
+    }
+    header h1 { color: var(--accent); margin: 0; font-size: 1.4rem; letter-spacing: .02em; }
+    header .meta { color: var(--dim); font-size: 0.85rem; }
+    main {
+      padding: 16px 24px; max-width: 1400px; margin: 0 auto;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px 16px;
+    }
+    section h2 {
+      margin: 0 0 10px 0;
+      font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--dim);
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+    section h2 .count {
+      color: var(--accent); font-size: 1rem; font-weight: bold;
+      letter-spacing: 0;
+    }
+    .stats-grid {
+      grid-column: 1 / -1;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+    }
+    .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+    .stat .label { color: var(--dim); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    .stat .value { color: var(--text); font-size: 1.6rem; font-weight: bold; margin-top: 4px; }
+    .stat .value.accent { color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { color: var(--dim); font-weight: normal; text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
+    td { padding: 4px 6px; border-bottom: 1px solid #131915; vertical-align: top; }
+    td.r { text-align: right; }
+    td .pill { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+    td .pill.pub { background: rgba(16,185,129,.15); color: #10b981; }
+    td .pill.exp { background: rgba(249,115,22,.15); color: #f97316; }
+    td .pill.priv { background: rgba(122,156,130,.15); color: var(--dim); }
+    td .pill.ok { background: rgba(57,255,122,.12); color: var(--accent); }
+    td .pill.warn { background: rgba(255,180,0,.15); color: var(--warn); }
+    td .pill.err { background: rgba(255,84,112,.15); color: var(--err); }
+    .empty { color: var(--dim); font-style: italic; padding: 8px 0; }
+    .req-list { max-height: 320px; overflow-y: auto; }
+    .req { display: grid; grid-template-columns: auto auto 1fr auto auto; gap: 8px; padding: 4px 6px; border-bottom: 1px solid #131915; align-items: center; }
+    .req .ts { color: var(--dim); font-size: 11px; }
+    .req .method { color: var(--dim); width: 38px; }
+    .req .path { font-family: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .req .ai { color: var(--ok); font-size: 11px; }
+    .req .lat { color: var(--dim); text-align: right; font-size: 11px; }
+    .req .status.x2 { color: var(--accent); }
+    .req .status.x4 { color: var(--warn); }
+    .req .status.x5 { color: var(--err); }
+    footer { padding: 16px 24px; color: var(--dim); font-size: 0.78rem; text-align: center; border-top: 1px solid var(--border); margin-top: 24px; }
+    .tag { color: var(--warn); }
+    code { background: #131915; padding: 1px 5px; border-radius: 3px; color: var(--text); font-size: 12px; }
+    .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: middle; animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1><span class="live-dot"></span>zhub <span class="tag">operator dashboard</span></h1>
+      <div class="meta">
+        <span id="hub-id">hub …</span> ·
+        <span id="uptime">uptime …</span> ·
+        <a href="/healthz">healthz</a> ·
+        <a href="/metrics">metrics</a> ·
+        <a href="/entity">entity</a> ·
+        <a href="/registry">registry</a>
+      </div>
+    </div>
+    <div class="meta">auto-refresh 3s</div>
+  </header>
+
+  <main>
+    <div class="stats-grid">
+      <div class="stat"><div class="label">publishers</div><div id="s-pub" class="value accent">0</div></div>
+      <div class="stat"><div class="label">connections</div><div id="s-conn" class="value">0</div></div>
+      <div class="stat"><div class="label">exposures</div><div id="s-exp" class="value">0</div></div>
+      <div class="stat"><div class="label">peers</div><div id="s-peers" class="value">0</div></div>
+      <div class="stat"><div class="label">total chats</div><div id="s-chats" class="value">0</div></div>
+      <div class="stat"><div class="label">avg latency</div><div id="s-lat" class="value">0<span style="font-size:0.7rem;color:var(--dim)"> ms</span></div></div>
+    </div>
+
+    <section>
+      <h2>publishers <span class="count" id="pub-count">0</span></h2>
+      <table>
+        <thead><tr><th>name</th><th>brain · description</th><th class="r">chats</th><th class="r">avg/max ms</th><th class="r">conns</th><th>uptime</th></tr></thead>
+        <tbody id="pub-table"><tr><td colspan="6" class="empty">no publishers registered</td></tr></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>exposures <span class="count" id="exp-count">0</span></h2>
+      <table>
+        <thead><tr><th>name</th><th>capabilities</th><th>uptime</th><th>visibility</th></tr></thead>
+        <tbody id="exp-table"><tr><td colspan="4" class="empty">no exposures registered</td></tr></tbody>
+      </table>
+    </section>
+
+    <section style="grid-column: 1 / -1;">
+      <h2>recent requests <span class="count" id="req-count">0</span></h2>
+      <div id="req-list" class="req-list"><div class="empty">no requests yet</div></div>
+    </section>
+
+    <section style="grid-column: 1 / -1;">
+      <h2>federation <span class="count" id="peer-count">0</span></h2>
+      <div id="peer-list"><div class="empty">no peers configured (set <code>ZHUB_PEERS</code> env var)</div></div>
+    </section>
+  </main>
+
+  <footer>
+    zhub · WiFi for AIs · <a href="https://github.com/Zawwarsami16/zhub">github.com/Zawwarsami16/zhub</a>
+  </footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    function fmtUptime(s) {
+      if (s < 60) return s + "s";
+      if (s < 3600) return Math.floor(s/60) + "m " + (s%60) + "s";
+      if (s < 86400) return Math.floor(s/3600) + "h " + Math.floor((s%3600)/60) + "m";
+      return Math.floor(s/86400) + "d " + Math.floor((s%86400)/3600) + "h";
+    }
+    function fmtTime(ts) {
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString([], {hour12: false});
+    }
+    function statusClass(code) {
+      if (code >= 500) return "status x5";
+      if (code >= 400) return "status x4";
+      return "status x2";
+    }
+    async function refresh() {
+      try {
+        const r = await fetch("/api/dashboard");
+        if (!r.ok) return;
+        const d = await r.json();
+
+        $("hub-id").textContent = "hub " + d.hub_id;
+        $("uptime").textContent = "uptime " + fmtUptime(d.uptime_seconds);
+
+        $("s-pub").textContent = d.publishers.length;
+        $("s-conn").textContent = d.connections_total;
+        $("s-exp").textContent = d.exposures.length;
+        $("s-peers").textContent = d.peers.length;
+        $("pub-count").textContent = d.publishers.length;
+        $("exp-count").textContent = d.exposures.length;
+        $("peer-count").textContent = d.peers.length;
+        $("req-count").textContent = d.recent_requests.length;
+
+        // total chats + avg latency aggregate
+        let chats = 0, latSum = 0, latCount = 0;
+        for (const name of Object.keys(d.by_ai)) {
+          const e = d.by_ai[name];
+          chats += (e.chat_requests || 0);
+          if (e.request_count) {
+            latSum += (e.total_latency_ms || 0);
+            latCount += e.request_count;
+          }
+        }
+        $("s-chats").textContent = chats;
+        $("s-lat").innerHTML = (latCount ? Math.floor(latSum / latCount) : 0)
+                              + '<span style="font-size:0.7rem;color:var(--dim)"> ms</span>';
+
+        // publishers table
+        if (d.publishers.length === 0) {
+          $("pub-table").innerHTML =
+            '<tr><td colspan="6" class="empty">no publishers registered</td></tr>';
+        } else {
+          $("pub-table").innerHTML = d.publishers.map(p => {
+            const m = d.by_ai[p.name] || {};
+            const desc = p.description || '';
+            const visPill = p.public
+              ? '<span class="pill pub">public</span>'
+              : '<span class="pill priv">private</span>';
+            return `<tr>
+              <td><strong>${p.name}</strong> ${visPill}</td>
+              <td><small>${desc.replace(/</g, "&lt;")}</small></td>
+              <td class="r">${m.chat_requests || 0}</td>
+              <td class="r">${m.avg_latency_ms || 0} / ${m.max_latency_ms || 0}</td>
+              <td class="r">${p.connections}</td>
+              <td><small>${fmtUptime(p.uptime_seconds)}</small></td>
+            </tr>`;
+          }).join("");
+        }
+
+        // exposures table
+        if (d.exposures.length === 0) {
+          $("exp-table").innerHTML =
+            '<tr><td colspan="4" class="empty">no exposures registered</td></tr>';
+        } else {
+          $("exp-table").innerHTML = d.exposures.map(e => {
+            const visPill = e.public
+              ? '<span class="pill exp">discoverable</span>'
+              : '<span class="pill priv">private</span>';
+            return `<tr>
+              <td><strong>${e.name}</strong></td>
+              <td><small>${e.capabilities.join(", ") || '—'}</small></td>
+              <td><small>${fmtUptime(e.uptime_seconds)}</small></td>
+              <td>${visPill}</td>
+            </tr>`;
+          }).join("");
+        }
+
+        // recent requests (newest first)
+        if (d.recent_requests.length === 0) {
+          $("req-list").innerHTML = '<div class="empty">no requests yet</div>';
+        } else {
+          const reversed = d.recent_requests.slice().reverse();
+          $("req-list").innerHTML = reversed.map(r => `
+            <div class="req">
+              <span class="ts">${fmtTime(r.ts)}</span>
+              <span class="method">${r.method}</span>
+              <span class="path">${r.path.replace(/</g, "&lt;")}</span>
+              <span class="ai">${r.ai ? "ai=" + r.ai : ""}</span>
+              <span class="${statusClass(r.status)}">${r.status} <span class="lat">${r.latency_ms}ms</span></span>
+            </div>
+          `).join("");
+        }
+
+        // peers
+        if (d.peers.length === 0) {
+          $("peer-list").innerHTML =
+            '<div class="empty">no peers configured (set <code>ZHUB_PEERS</code> env var)</div>';
+        } else {
+          $("peer-list").innerHTML = d.peers.map(u =>
+            `<div><a href="${u}">${u}</a></div>`
+          ).join("");
+        }
+      } catch (err) {
+        console.error("dashboard refresh failed:", err);
+      }
+    }
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>

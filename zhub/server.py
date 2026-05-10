@@ -121,6 +121,11 @@ class Hub:
         # device_key (dx_...) for the auth path.
         self.exposures: dict[str, ExposureRegistration] = {}
         self.device_keys: dict[str, str] = {}  # dx_... → exposure_id
+        # Phase 8.0: ring buffer of recent HTTP requests for the dashboard.
+        # Filled by the access-log middleware. Capacity 50 — small, fixed,
+        # zero unbounded growth.
+        from collections import deque as _deque
+        self.recent_requests: _deque = _deque(maxlen=50)
 
     def bump(self, ai_name: str, key: str, delta: int = 1) -> None:
         self.metrics[ai_name][key] += delta
@@ -681,6 +686,15 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             response.status_code, request.method, path, latency_ms,
             f" ai={ai_name}" if ai_name else "",
         )
+        # Phase 8.0: ring-buffer for the dashboard
+        hub.recent_requests.append({
+            "ts": int(time.time()),
+            "method": request.method,
+            "path": path,
+            "status": response.status_code,
+            "latency_ms": int(latency_ms),
+            "ai": ai_name,
+        })
         return response
 
     @app.middleware("http")
@@ -792,39 +806,62 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             "by_ai": by_ai,
         })
 
-    @app.get("/")
-    async def index_html() -> JSONResponse:
-        # Returns the registry HTML page rendered from the template
-        from fastapi.responses import HTMLResponse
-        live = []
+    @app.get("/api/dashboard")
+    async def api_dashboard() -> JSONResponse:
+        """JSON snapshot the dashboard polls for live operator visibility.
+        Same data shape as /metrics but enriched with publisher/exposure
+        details and the recent-requests ring buffer."""
+        publishers = []
         for name, p in hub.publishers.items():
-            if p.manifest.get("public"):
-                live.append({
-                    "name": name,
-                    "description": p.manifest.get("description", ""),
-                    "operator": p.manifest.get("operator", ""),
-                    "capabilities": [c.get("name") for c in p.manifest.get("capabilities", [])],
-                    "connections": len(hub.connections_by_ai.get(name, {})),
-                    "uptime_seconds": int(time.time() - p.created_at),
-                    "online": True,
-                })
-        # Also include known-but-offline publishers from storage
-        known = {p["name"] for p in live}
-        if hub.storage:
-            for entry in hub.storage.all_publishers():
-                if entry["name"] not in known and entry["manifest"].get("public"):
-                    live.append({
-                        "name": entry["name"],
-                        "description": entry["manifest"].get("description", ""),
-                        "operator": entry["manifest"].get("operator", ""),
-                        "capabilities": [c.get("name") for c in entry["manifest"].get("capabilities", [])],
-                        "connections": 0,
-                        "uptime_seconds": 0,
-                        "online": False,
-                        "last_seen": entry["last_seen"],
-                        "total_chats": entry["total_chats"],
-                    })
-        html = _render_registry_html(live)
+            publishers.append({
+                "name": name,
+                "description": p.manifest.get("description", ""),
+                "operator": p.manifest.get("operator", ""),
+                "capabilities": [c.get("name") for c in p.manifest.get("capabilities", [])],
+                "connections": len(hub.connections_by_ai.get(name, {})),
+                "uptime_seconds": int(time.time() - p.created_at),
+                "public": bool(p.manifest.get("public")),
+                "rate_limit": p.manifest.get("rate_limit", "60/min"),
+            })
+        exposures = []
+        for eid, exp in hub.exposures.items():
+            exposures.append({
+                "exposure_id": eid,
+                "name": exp.name,
+                "description": exp.manifest.get("description", ""),
+                "capabilities": [c.get("name") for c in exp.manifest.get("capabilities", [])],
+                "uptime_seconds": int(time.time() - exp.created_at),
+                "public": bool(exp.manifest.get("public")),
+            })
+        by_ai = {}
+        for name, counts in hub.metrics.items():
+            entry = dict(counts)
+            count = entry.get("request_count", 0)
+            total = entry.get("total_latency_ms", 0)
+            entry["avg_latency_ms"] = (total // count) if count > 0 else 0
+            by_ai[name] = entry
+        peers_env = os.environ.get("ZHUB_PEERS", "")
+        peers = [p.strip() for p in peers_env.split(",") if p.strip()]
+        return JSONResponse({
+            "hub_id": hub.hub_id,
+            "uptime_seconds": int(time.time() - hub.started_at),
+            "publishers": publishers,
+            "exposures": exposures,
+            "connections_total": sum(len(c) for c in hub.connections_by_ai.values()),
+            "by_ai": by_ai,
+            "recent_requests": list(hub.recent_requests),
+            "peers": peers,
+        })
+
+    @app.get("/")
+    async def index_html():
+        from pathlib import Path as _Path
+        from fastapi.responses import HTMLResponse
+        path = _Path(__file__).parent / "dashboard.html"
+        try:
+            html = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            html = "<h1>zhub</h1><p>dashboard.html missing</p>"
         return HTMLResponse(html)
 
     @app.get("/registry")
@@ -1897,58 +1934,6 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
 
     app.state.hub = hub
     return app
-
-
-def _render_registry_html(entries: list[dict[str, Any]]) -> str:
-    """Tiny inline registry page. Mobile-friendly. Auto-refresh."""
-    rows_html = []
-    for e in entries:
-        status_color = "#39FF7A" if e["online"] else "#7A9C82"
-        status_label = "online" if e["online"] else "offline"
-        caps_html = ", ".join(e.get("capabilities") or [])
-        conn_label = f"{e['connections']} connection(s)" if e["online"] else "—"
-        rows_html.append(f"""
-        <tr>
-          <td><span style="color:{status_color}">●</span> {status_label}</td>
-          <td><a href="/{e['name']}/manifest.json">{e['name']}</a></td>
-          <td>{e['description'] or '—'}</td>
-          <td><small>{caps_html}</small></td>
-          <td>{conn_label}</td>
-        </tr>
-        """)
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="refresh" content="10">
-  <title>zhub registry</title>
-  <style>
-    body {{ background:#0A0E0A; color:#D9F2DA; font-family: ui-monospace,SFMono-Regular,Menlo,monospace; padding:16px; }}
-    h1 {{ color:#39FF7A; margin:0 0 4px 0; font-size:1.4rem; }}
-    .tag {{ color:#FFB400; }}
-    table {{ width:100%; border-collapse: collapse; margin-top:16px; }}
-    th, td {{ padding:6px 10px; text-align:left; vertical-align:top; }}
-    th {{ color:#7A9C82; border-bottom:1px solid #1F2D24; font-weight:normal; font-size:0.85rem; }}
-    tr td {{ border-bottom:1px solid #152018; }}
-    a {{ color:#5AC8FA; text-decoration:none; }}
-    a:hover {{ text-decoration:underline; }}
-    small {{ color:#7A9C82; }}
-    footer {{ margin-top:24px; color:#4A6B53; font-size:0.8rem; }}
-  </style>
-</head>
-<body>
-  <h1>zhub <span class="tag">registry</span></h1>
-  <small>WiFi for AIs · {len(entries)} listed · auto-refresh 10s</small>
-  <table>
-    <thead><tr><th>status</th><th>name</th><th>description</th><th>capabilities</th><th>activity</th></tr></thead>
-    <tbody>{''.join(rows_html) if rows_html else '<tr><td colspan="5"><small>no public AIs registered yet — be the first.</small></td></tr>'}</tbody>
-  </table>
-  <footer>
-    <a href="/registry">/registry</a> · <a href="/healthz">/healthz</a> · zhub v0.1.0
-  </footer>
-</body>
-</html>"""
 
 
 def main() -> None:

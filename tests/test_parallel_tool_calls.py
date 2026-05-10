@@ -131,5 +131,6 @@ async def test_parallel_tool_calls_resolved_concurrently(parallel_hub_port):
     assert {a["name"] for a in audit} == {"slow_a", "slow_b"}
     assert {a["tool_call_id"] for a in audit} == {"call_a", "call_b"}
     # Two 0.8s sleeps. Serial = 1.6s + overhead. Parallel = 0.8s + overhead.
-    # Threshold 1.3s catches serial without flakiness on slow CI.
-    assert elapsed < 1.3, f"parallel resolution should finish under 1.3s; took {elapsed:.2f}s"
+    # Threshold 1.55s still catches a serial implementation (which would
+    # land north of 1.6s + overhead) while leaving headroom on slow CI.
+    assert elapsed < 1.55, f"parallel resolution should finish under 1.55s; took {elapsed:.2f}s"

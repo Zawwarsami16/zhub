@@ -93,8 +93,15 @@ Liveness probe. Returns `{status, publishers}`. No auth.
 
 ### `GET /metrics`
 Hub-wide counters (per-AI: chat_requests, rate_limited, peer_proxied,
-tool_calls_resolved, http_invoke). Use to track who's hot, who's failing.
+tool_calls_resolved, http_invoke, request_count, total_latency_ms,
+max_latency_ms, avg_latency_ms). Use to track who's hot, who's failing.
 No auth (snapshot only, no secrets).
+
+### `GET /` and `GET /api/dashboard`
+`/` serves an HTML operator dashboard (auto-refresh 3s). `/api/dashboard`
+returns the JSON snapshot it polls — same data shape as `/metrics` plus
+publisher/exposure details and a 50-entry recent-requests ring buffer.
+No auth on either; public visibility into hub health.
 
 ### `GET /v1/models`
 OpenAI-style model list — every registered publisher as one model. Use
