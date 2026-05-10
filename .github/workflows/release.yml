@@ -61,9 +61,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract version from tag
+      - name: Extract version from tag + lowercase owner
         id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          # GHCR requires lowercase repo paths; the github actor / owner
+          # may contain capitals.
+          echo "owner_lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -82,7 +86,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/zhub:latest
-            ghcr.io/${{ github.repository_owner }}/zhub:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ steps.ver.outputs.owner_lc }}/zhub:latest
+            ghcr.io/${{ steps.ver.outputs.owner_lc }}/zhub:${{ steps.ver.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
