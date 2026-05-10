@@ -168,25 +168,39 @@ print(resp["text"])
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    classDef ext fill:#1f2937,color:#e5e7eb,stroke:#4b5563
+    classDef hub fill:#0f3460,color:#e5e7eb,stroke:#3b82f6
+    classDef pub fill:#064e3b,color:#e5e7eb,stroke:#10b981
+    classDef cli fill:#581c87,color:#e5e7eb,stroke:#a855f7
+
+    Pocket[browser BYOK<br/>e.g. Pocket]:::ext
+    OpenAIPy[openai-py / curl<br/>any HTTP client]:::ext
+    Claude[Claude Desktop /<br/>Cursor / Cline<br/>via MCP]:::ext
+
+    Hub((zhub hub<br/>FastAPI + WS<br/>SQLite persistence)):::hub
+
+    Pub1[publisher<br/>publish&#40;name, brain, ...&#41;]:::pub
+    Pub2[publisher<br/>another AI]:::pub
+
+    Conn1[connection<br/>connect&#40;ai, key, capabilities&#41;]:::cli
+    Conn2[connection<br/>another device]:::cli
+
+    Pocket -- HTTPS Bearer<br/>POST /v1/chat/completions --> Hub
+    OpenAIPy -- HTTPS Bearer --> Hub
+    Claude -- stdio JSON-RPC<br/>via zhub.mcp_server --> Hub
+
+    Hub <-- WS<br/>chat-request / chat-chunk<br/>invoke-result --> Pub1
+    Hub <-- WS --> Pub2
+
+    Hub <-- WS<br/>chat-request<br/>invoke-request --> Conn1
+    Hub <-- WS --> Conn2
+
+    Hub -. peer routing .- Hub2((peer hub)):::hub
 ```
-[curl / openai-py / friend's app]
-           │ HTTPS, Bearer key
-           ▼
-   ┌──────────────────────────┐
-   │   zhub hub server         │
-   │   • routes chat requests  │
-   │   • routes invokes        │
-   │   • holds the registry    │
-   └────────┬─────────────────┘
-            │  WebSocket multiplex
-            │
-   ┌────────┴──────────┐
-   │                   │
-[ AI publish() ]    [ Client connect() ]
-   │ chat_handler      │ capability handlers
-   │                   │
-   └─── bidirectional ─┘
-```
+
+The hub is a router. State (publisher registry, in-flight requests, rate-limit windows, metrics, entity extensions) lives in the hub process; persistence is SQLite. Publishers and connections each hold one long-lived WebSocket. Federation: hubs peer each other and proxy chat completions / WS register-connection for AIs hosted elsewhere.
 
 - The hub holds a registry of every published AI and every connection to it.
 - Publishers receive `connection-event` messages whenever a client connects, disconnects, or updates its capabilities.

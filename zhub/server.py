@@ -49,6 +49,11 @@ from .protocol import (
 
 
 log = logging.getLogger("zhub.server")
+access_log = logging.getLogger("zhub.access")
+# Make sure access logs appear by default — uvicorn's default config
+# leaves the root logger at WARNING for app loggers.
+if not access_log.handlers:
+    access_log.setLevel(logging.INFO)
 
 
 # ---- registry -----------------------------------------------------------
@@ -100,6 +105,16 @@ class Hub:
 
     def bump(self, ai_name: str, key: str, delta: int = 1) -> None:
         self.metrics[ai_name][key] += delta
+
+    def record_latency(self, ai_name: str, latency_ms: float) -> None:
+        """Track per-AI request latency. Stores total_ms + count for avg
+        and max for the obvious upper bound. Called by the access-log
+        middleware after every request whose path identifies an AI."""
+        bucket = self.metrics[ai_name]
+        bucket["request_count"] += 1
+        bucket["total_latency_ms"] += int(latency_ms)
+        if int(latency_ms) > bucket.get("max_latency_ms", 0):
+            bucket["max_latency_ms"] = int(latency_ms)
 
     def check_rate_limit(self, ai_name: str, api_key: str) -> tuple[bool, Optional[float]]:
         """Returns (allowed, retry_after_seconds_or_None)."""
@@ -534,6 +549,33 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         return "\n\n".join(parts).rstrip() + "\n"
 
     @app.middleware("http")
+    async def _access_log_and_latency(request, call_next):
+        """Per-request access log + per-AI latency tracking.
+        Logs at INFO via the `zhub.access` logger:
+            <status> <method> <path> <latency_ms>ms [ai=<name>]
+        For paths matching /<ai>/v1/* the AI name is also tracked in
+        the hub's per-AI metrics bucket."""
+        start = time.perf_counter()
+        response = await call_next(request)
+        latency_ms = (time.perf_counter() - start) * 1000.0
+        path = request.url.path
+        ai_name: Optional[str] = None
+        # Heuristic: routes that start with /<ai>/v1/... or /<ai>/manifest.json
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2 and parts[0] in hub.publishers:
+            ai_name = parts[0]
+        elif len(parts) >= 1 and parts[0] in hub.publishers:
+            ai_name = parts[0]
+        if ai_name is not None:
+            hub.record_latency(ai_name, latency_ms)
+        access_log.info(
+            "%d %s %s %.0fms%s",
+            response.status_code, request.method, path, latency_ms,
+            f" ai={ai_name}" if ai_name else "",
+        )
+        return response
+
+    @app.middleware("http")
     async def _add_entity_hint_header(request, call_next):
         """On any 4xx/5xx response whose status code has a recipe in
         entity.md, set X-Zhub-Entity-Hint pointing at /entity/errors/<code>.
@@ -623,9 +665,13 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     @app.get("/metrics")
     async def metrics() -> JSONResponse:
         """Best-effort observability snapshot. Counters reset on hub restart."""
-        by_ai = {
-            name: dict(counts) for name, counts in hub.metrics.items()
-        }
+        by_ai: dict[str, dict[str, Any]] = {}
+        for name, counts in hub.metrics.items():
+            entry = dict(counts)
+            count = entry.get("request_count", 0)
+            total = entry.get("total_latency_ms", 0)
+            entry["avg_latency_ms"] = (total // count) if count > 0 else 0
+            by_ai[name] = entry
         for name, p in hub.publishers.items():
             entry = by_ai.setdefault(name, {})
             entry["connections"] = len(hub.connections_by_ai.get(name, {}))

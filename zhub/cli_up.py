@@ -56,13 +56,37 @@ def _resolve_brain(name: str):
     return cls.try_init()
 
 
-async def _start_tunnel(port: int) -> tuple[Optional[asyncio.subprocess.Process], Optional[str]]:
-    """Spawn cloudflared --url http://localhost:<port>; wait for the
-    public URL to appear in stderr. Returns (proc, url) or (None, None)
-    if cloudflared isn't installed."""
+async def _start_tunnel(
+    port: int, named: Optional[str] = None,
+) -> tuple[Optional[asyncio.subprocess.Process], Optional[str]]:
+    """Spawn cloudflared and wait for the public URL.
+
+    quick mode (named=None): spawns `cloudflared tunnel --url http://localhost:<port>`,
+    parses the random `*.trycloudflare.com` URL out of its stderr.
+
+    named mode (named="my-tunnel"): runs `cloudflared tunnel run <name>`,
+    which uses ~/.cloudflared/<name>.json and the operator's pre-configured
+    DNS route. The URL is the one configured in the named tunnel; we
+    don't try to discover it from stderr — operator already knows it.
+    Pre-req: `cloudflared tunnel route dns <name> <hostname>` was run
+    once at setup.
+
+    Returns (proc, url) or (None, None) if cloudflared isn't installed.
+    For named mode, url is None — operator already knows their hostname.
+    """
     import shutil
     if not shutil.which("cloudflared"):
         return None, None
+    if named:
+        proc = await asyncio.create_subprocess_exec(
+            "cloudflared", "tunnel", "--no-autoupdate", "run", named,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        # named tunnels don't print a fresh URL — return None so the
+        # caller falls back to printing local + a "named tunnel running"
+        # note.
+        return proc, None
     proc = await asyncio.create_subprocess_exec(
         "cloudflared", "tunnel", "--url", f"http://localhost:{port}",
         "--no-autoupdate",
@@ -116,8 +140,12 @@ async def _run(args: argparse.Namespace) -> int:
     public_url = f"http://127.0.0.1:{port}"
     tunnel_proc: Optional[asyncio.subprocess.Process] = None
     if not args.no_tunnel:
-        tunnel_proc, t_url = await _start_tunnel(port)
-        if t_url is None:
+        tunnel_proc, t_url = await _start_tunnel(port, named=args.tunnel_name)
+        if args.tunnel_name and tunnel_proc:
+            print(f"[zhub up] named tunnel `{args.tunnel_name}` running — "
+                  "use the hostname you configured with "
+                  "`cloudflared tunnel route dns`", file=sys.stderr)
+        elif t_url is None:
             print("[zhub up] cloudflared unavailable or slow to start; "
                   "falling back to local URL", file=sys.stderr)
         else:
@@ -216,6 +244,10 @@ def run(argv: list[str]) -> None:
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--no-tunnel", action="store_true",
                         help="skip cloudflared, use local URL only")
+    parser.add_argument("--tunnel-name", default=None,
+                        help="use a pre-configured cloudflared named tunnel "
+                             "(stable URL); requires `cloudflared tunnel route dns` "
+                             "to have been run once at setup")
     parser.add_argument("--name", default=os.environ.get("ZHUB_NAME", "me"))
     parser.add_argument("--brain", default="auto",
                         help="auto | ollama | groq | openai | cerebras")
