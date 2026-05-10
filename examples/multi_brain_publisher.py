@@ -64,6 +64,11 @@ async def main() -> None:
                                                "ws://127.0.0.1:8080"))
     parser.add_argument("--list", action="store_true",
                         help="list available brains and exit")
+    parser.add_argument("--system", default=os.environ.get("ZHUB_SYSTEM", ""),
+                        help="server-side system prompt prepended to every "
+                             "chat (lets the brain know it lives behind zhub, "
+                             "what its name/persona is, etc). Clients don't "
+                             "have to send any context.")
     args = parser.parse_args()
 
     if args.list:
@@ -80,9 +85,14 @@ async def main() -> None:
 
     async def chat_handler(messages, options):
         # Fold any system messages into a single system prompt; keep the
-        # rest of the conversation intact.
-        system_parts = [m.get("content", "") for m in messages
-                        if m.get("role") == "system"]
+        # rest of the conversation intact. The publisher-level --system
+        # always wins position-wise (prepended), so server-side identity
+        # survives even if a client also sends a system message.
+        system_parts = []
+        if args.system:
+            system_parts.append(args.system)
+        system_parts += [m.get("content", "") for m in messages
+                         if m.get("role") == "system"]
         non_system = [m for m in messages if m.get("role") != "system"]
         system = "\n\n".join(p for p in system_parts if p) or None
         async for chunk in brain.stream(
