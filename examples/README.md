@@ -15,6 +15,7 @@ Runnable scripts that show off each primitive in isolation, plus a few that comb
 | [`mcp_bridge.py`](mcp_bridge.py) | Wrap an existing MCP server as a zhub publisher (subprocess + JSON-RPC over stdio) | hub + an MCP server binary (`MCP_COMMAND` env) |
 | [`multi_brain_publisher.py`](multi_brain_publisher.py) | Pick a brain (auto-detect or explicit `--brain ollama|groq|openai|cerebras|anthropic|together|mistral|cohere`), publish, stream responses through hub | hub + brain credentials in env |
 | [`full_stack_demo.py`](full_stack_demo.py) | The whole thing in one file: hub + publisher + exposure + tool resolution + dashboard pointer | none (in-process) |
+| [`session_bridge_publisher.py`](session_bridge_publisher.py) | Wrap an interactive AI session (Claude Code, Cursor, custom agent loop) as a publisher via a file-bridge — chats become inbox files, the session writes outbox replies | hub + a watcher to read/reply (manual, an agent, or the built-in `_example_auto_watcher`) |
 
 ## Running
 
