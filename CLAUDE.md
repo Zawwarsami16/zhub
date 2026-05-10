@@ -92,8 +92,9 @@ Tests: `pytest -v`. The e2e tests spin up the hub in-process and run the full pu
 - **Phase 5.2** ✅ — Entity expansion: added `## install`, `## up`, `## paths` sections to `entity.md`. Header notes the file ships with the package so an AI installing zhub can read it locally before any hub is running.
 - **Phase 5.3** ✅ — `AnthropicAdapter` brain (5th adapter). Anthropic Messages API has its own SSE shape (`event:`/`data:` pairs, `content_block_delta` with `text_delta`); adapter normalizes to `ChatChunk` like the others. Registered in REGISTRY after Cerebras.
 - **Phase 6.0** ✅ — Production-readiness pack: structured access logs at `zhub.access` logger (one line per request: status + method + path + latency_ms + ai_name when applicable); per-AI latency tracking surfaced in `/metrics` (`request_count`, `total_latency_ms`, `max_latency_ms`, `avg_latency_ms`); `python -m zhub up --tunnel-name <name>` for cloudflared *named* tunnels (stable URL across restarts); README gets a mermaid arch diagram; new `docs/DEPLOY.md` walkthrough for a $5 VPS deployment with systemd unit files for hub + named tunnel.
+- **Phase 7.0** ✅ — Capability-only WebSocket (`/ws/expose`). Devices register tools without pairing to any specific AI; hub mints `dx_` device key + `ex_` exposure id, persists across restarts. `GET /exposures` (public discovery), `POST /exposures/<id>/invoke` (any registered publisher's `zk_` key authorizes; same JSON-Schema validation as `/v1/invoke`). New SDK function `zhub.expose(name, capabilities, public=True)` mirrors `connect()` shape but is AI-untethered. The "USB peripherals for AIs on the hub" primitive — register once, available to all.
 
-**Next (not started):** true tool_call delta streaming through SSE (4.2b), multi-tier API keys, capability-only WS connections (a "tool provider" usable by any AI on the hub, not tied to one publisher), MCP resources/prompts surface.
+**Next (not started):** true tool_call delta streaming through SSE (4.2b), multi-tier API keys, MCP resources/prompts surface, more brain adapters (Cohere/Mistral/Together/Bedrock/Vertex).
 
 ## 6. File layout (what's where)
 

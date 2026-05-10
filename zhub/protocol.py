@@ -87,6 +87,32 @@ def register_connection(name: str, api_key: str, client_manifest: dict[str, Any]
     )
 
 
+def register_exposure(name: str, manifest: dict[str, Any],
+                      device_key: Optional[str] = None) -> Envelope:
+    """Phase 7.0: device announces capabilities WITHOUT pairing to an AI.
+    Hub mints a `dx_` device key and `ex_` exposure id on first register;
+    re-registration with the same device_key restores the same exposure_id."""
+    return Envelope(
+        type="register-exposure",
+        payload={
+            "name": name,
+            "manifest": manifest,
+            "device_key": device_key,
+        },
+    )
+
+
+def exposure_registered(exposure_id: str, device_key: str, name: str) -> Envelope:
+    return Envelope(
+        type="exposure-registered",
+        payload={
+            "exposure_id": exposure_id,
+            "device_key": device_key,
+            "name": name,
+        },
+    )
+
+
 def chat_request(messages: list[dict[str, Any]], model: str = "default",
                  temperature: float = 0.4, max_tokens: int = 4096,
                  extras: Optional[dict[str, Any]] = None) -> Envelope:

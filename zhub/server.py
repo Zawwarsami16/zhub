@@ -80,6 +80,19 @@ class ConnectionRegistration:
     pending: dict[str, asyncio.Future] = field(default_factory=dict)
 
 
+@dataclass
+class ExposureRegistration:
+    """Phase 7.0: a device exposing capabilities untethered to any one AI.
+    Reachable by any registered publisher key via /exposures/<id>/invoke."""
+    exposure_id: str
+    name: str
+    websocket: WebSocket
+    manifest: dict[str, Any]
+    device_key_hash: str
+    created_at: float = field(default_factory=time.time)
+    pending: dict[str, asyncio.Future] = field(default_factory=dict)
+
+
 class Hub:
     def __init__(self, storage: Optional[Storage] = None) -> None:
         self.publishers: dict[str, PublisherRegistration] = {}
@@ -102,6 +115,12 @@ class Hub:
         # which publisher is hot. Counters are best-effort, not transactional.
         self.started_at = time.time()
         self.metrics: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        # Phase 7.0: capability-only exposures — devices that aren't paired
+        # to any specific publisher. Any registered publisher's bearer key
+        # can invoke them. Lookup by exposure_id (ex_...) and by raw
+        # device_key (dx_...) for the auth path.
+        self.exposures: dict[str, ExposureRegistration] = {}
+        self.device_keys: dict[str, str] = {}  # dx_... → exposure_id
 
     def bump(self, ai_name: str, key: str, delta: int = 1) -> None:
         self.metrics[ai_name][key] += delta
@@ -271,6 +290,95 @@ class Hub:
                 connection_event("disconnected", connection_id, None),
             )
         log.info("connection unregistered: %s", connection_id)
+
+    # exposures (Phase 7.0) --------------------------------------------
+
+    async def register_exposure(self, name: str, manifest: dict[str, Any],
+                                websocket: WebSocket,
+                                desired_device_key: Optional[str] = None,
+                                ) -> tuple[str, str]:
+        """Register a device-only exposure. Returns (exposure_id, device_key).
+
+        On re-registration with a known `desired_device_key` (post-restart),
+        the same `exposure_id` is restored from persistence."""
+        async with self.lock:
+            # Re-registration path
+            if desired_device_key and self.storage:
+                stored = self.storage.lookup_exposure_by_key_hash(hash_key(desired_device_key))
+                if stored is not None:
+                    eid = stored["exposure_id"]
+                    self.exposures[eid] = ExposureRegistration(
+                        exposure_id=eid,
+                        name=stored["name"],
+                        websocket=websocket,
+                        manifest=manifest or stored["manifest"],
+                        device_key_hash=stored["device_key_hash"],
+                    )
+                    self.device_keys[desired_device_key] = eid
+                    self.storage.touch_exposure(eid)
+                    log.info("exposure re-registered: %s (%s)", eid, name)
+                    return eid, desired_device_key
+
+            # Fresh registration
+            device_key = "dx_" + secrets.token_urlsafe(20)
+            key_hash = hash_key(device_key)
+            if self.storage:
+                eid = self.storage.add_exposure(name, manifest, key_hash)
+            else:
+                eid = "ex_" + secrets.token_urlsafe(8)
+            self.exposures[eid] = ExposureRegistration(
+                exposure_id=eid,
+                name=name,
+                websocket=websocket,
+                manifest=manifest,
+                device_key_hash=key_hash,
+            )
+            self.device_keys[device_key] = eid
+            log.info("exposure registered: %s (%s)", eid, name)
+            return eid, device_key
+
+    async def unregister_exposure(self, exposure_id: str) -> None:
+        async with self.lock:
+            self.exposures.pop(exposure_id, None)
+            for k, v in list(self.device_keys.items()):
+                if v == exposure_id:
+                    self.device_keys.pop(k, None)
+        log.info("exposure unregistered: %s", exposure_id)
+
+    def find_exposure_by_capability(self, capability_name: str) -> Optional[str]:
+        for eid, exp in self.exposures.items():
+            for cap in exp.manifest.get("capabilities", []):
+                if cap.get("name") == capability_name:
+                    return eid
+        return None
+
+    def list_public_exposures(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for eid, exp in self.exposures.items():
+            if not exp.manifest.get("public"):
+                continue
+            out.append({
+                "exposure_id": eid,
+                "name": exp.name,
+                "description": exp.manifest.get("description", ""),
+                "capabilities": [c.get("name") for c in exp.manifest.get("capabilities", [])],
+                "uptime_seconds": int(time.time() - exp.created_at),
+            })
+        return out
+
+    async def invoke_exposure(self, exposure_id: str, capability: str,
+                              args: dict[str, Any], timeout: float = 60.0) -> Any:
+        exp = self.exposures.get(exposure_id)
+        if exp is None:
+            raise LookupError("exposure not found")
+        env = invoke_request(exposure_id, capability, args)
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        exp.pending[env.request_id] = future
+        try:
+            await exp.websocket.send_text(env.to_json())
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            exp.pending.pop(env.request_id, None)
 
     # routing -----------------------------------------------------------
 
@@ -1027,6 +1135,62 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 })
             iters += 1
 
+    # --- exposures (Phase 7.0) ---------------------------------------
+
+    @app.get("/exposures")
+    async def list_exposures() -> JSONResponse:
+        return JSONResponse(hub.list_public_exposures())
+
+    @app.post("/exposures/{exposure_id}/invoke")
+    async def invoke_exposure_http(exposure_id: str, request: Request):
+        """Direct HTTP invocation of a device-only exposure. Auth: any
+        registered publisher's bearer key — exposures aren't paired to
+        one AI, so any AI on the hub may use them. JSON-Schema validation
+        runs the same way it does for connected-client capabilities."""
+        body = await request.json()
+        api_key = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not hub.lookup_by_api_key(api_key):
+            raise HTTPException(401, "invalid api key — invoke requires "
+                                     "any registered publisher's bearer key")
+        exp = hub.exposures.get(exposure_id)
+        if exp is None:
+            raise HTTPException(404, f"exposure '{exposure_id}' not found")
+        capability = body.get("capability") or ""
+        args = body.get("args") or {}
+        if not capability:
+            raise HTTPException(400, "missing 'capability'")
+        # Validate args against the exposure's declared schema if present
+        schema = next(
+            (c.get("schema") for c in exp.manifest.get("capabilities", [])
+             if c.get("name") == capability),
+            None,
+        )
+        if schema is None:
+            raise HTTPException(404,
+                f"exposure '{exposure_id}' does not expose '{capability}'")
+        if isinstance(schema, dict):
+            errs = validate_schema(args, schema)
+            if errs:
+                raise HTTPException(400, "validation failed: " + "; ".join(errs))
+        try:
+            relayed = await hub.invoke_exposure(exposure_id, capability, args)
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "exposure did not respond in time")
+        # Same envelope-unwrap as /v1/invoke
+        if isinstance(relayed, dict) and "ok" in relayed:
+            if relayed.get("ok"):
+                result = relayed.get("result")
+            else:
+                return JSONResponse(
+                    status_code=502,
+                    content={"ok": False, "error": relayed.get("error") or "invoke failed"},
+                )
+        else:
+            result = relayed
+        return JSONResponse({"ok": True, "result": result, "exposure_id": exposure_id})
+
     @app.post("/{ai_name}/v1/invoke")
     async def invoke_capability_http(ai_name: str, request: Request):
         """Direct HTTP invocation of a connected client's capability.
@@ -1556,6 +1720,65 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         finally:
             if ai_name and connection_id:
                 await hub.unregister_connection(ai_name, connection_id)
+
+    @app.websocket("/ws/expose")
+    async def ws_expose(websocket: WebSocket) -> None:
+        """Phase 7.0: device exposes capabilities untethered to any AI.
+        After register-exposure, the device idles and listens for
+        invoke-request envelopes (same shape as /ws/connect path),
+        replies with invoke-result."""
+        await websocket.accept()
+        exposure_id: Optional[str] = None
+        try:
+            while True:
+                text = await websocket.receive_text()
+                env = Envelope.from_json(text)
+
+                if env.type == "register-exposure" and exposure_id is None:
+                    payload_name = env.payload.get("name", "device")
+                    manifest = env.payload.get("manifest", {}) or {}
+                    desired_key = env.payload.get("device_key")
+                    try:
+                        eid, dev_key = await hub.register_exposure(
+                            payload_name, manifest, websocket,
+                            desired_device_key=desired_key,
+                        )
+                    except Exception as e:
+                        await websocket.send_text(
+                            error_envelope(env.request_id, "register_failed", str(e)).to_json()
+                        )
+                        break
+                    exposure_id = eid
+                    await websocket.send_text(
+                        Envelope(
+                            type="exposure-registered",
+                            request_id=env.request_id,
+                            payload={
+                                "exposure_id": eid,
+                                "device_key": dev_key,
+                                "name": payload_name,
+                            },
+                        ).to_json()
+                    )
+
+                elif env.type == "invoke-result" and exposure_id:
+                    exp = hub.exposures.get(exposure_id)
+                    if exp and env.request_id in exp.pending:
+                        exp.pending[env.request_id].set_result(env.payload)
+
+                elif env.type == "ping":
+                    await websocket.send_text(
+                        Envelope(type="pong", request_id=env.request_id).to_json()
+                    )
+
+                elif env.type == "unregister":
+                    break
+
+        except WebSocketDisconnect:
+            pass
+        finally:
+            if exposure_id:
+                await hub.unregister_exposure(exposure_id)
 
     app.state.hub = hub
     return app

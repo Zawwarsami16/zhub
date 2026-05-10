@@ -41,7 +41,9 @@ Quickstart:
     conn.run_forever()
 """
 
-from .client import publish, connect, ZhubPublication, ZhubConnection
+from .client import (
+    publish, connect, expose, ZhubPublication, ZhubConnection, ZhubExposure,
+)
 from .manifest import Manifest, Capability
 from .errors import ZhubError, AuthError, ConnectionError as ZhubConnectionError
 
@@ -58,8 +60,10 @@ __version__ = "0.1.0"
 __all__ = [
     "publish",
     "connect",
+    "expose",
     "ZhubPublication",
     "ZhubConnection",
+    "ZhubExposure",
     "Manifest",
     "Capability",
     "ZhubError",

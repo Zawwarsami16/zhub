@@ -170,6 +170,23 @@ Publisher long-lived WebSocket. Send `register-publisher` first.
 Client long-lived WebSocket. Send `register-connection` first. If the
 AI lives on a peer hub, this hub transparently tunnels.
 
+### `WS /ws/expose` (Phase 7.0)
+Device-only WebSocket — no AI pairing required. Send `register-exposure`
+first; hub returns `{exposure_id, device_key}` (`ex_...` and `dx_...`).
+Device idles and listens for `invoke-request` envelopes. Re-registration
+with the same `device_key` across hub restarts restores the same
+`exposure_id` (persistence required: `--db <path>`). Any registered
+publisher's `zk_` key can invoke this exposure via the HTTP route below.
+
+### `GET /exposures`
+Public-flagged exposures only. No auth. Returns
+`[{exposure_id, name, description, capabilities, uptime_seconds}]`.
+
+### `POST /exposures/<id>/invoke`
+Auth: `Bearer <any registered publisher's zk_ key>`. Body:
+`{capability, args}`. Args validated against the exposure's declared
+JSON schema. Returns `{ok, result, exposure_id}`.
+
 ---
 
 ## errors

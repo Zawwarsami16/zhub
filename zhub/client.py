@@ -23,8 +23,8 @@ except ImportError as e:
 
 from .manifest import Capability, Manifest, chat_only_manifest
 from .protocol import (
-    Envelope, register_publisher, register_connection, chat_request, chat_chunk,
-    invoke_request, invoke_result,
+    Envelope, register_publisher, register_connection, register_exposure,
+    chat_request, chat_chunk, invoke_request, invoke_result,
 )
 from .errors import AuthError, ConnectionError as ZhubConnectionError
 
@@ -459,4 +459,118 @@ async def _handle_invoke(conn: ZhubConnection, ws, env: Envelope) -> None:
         await ws.send(invoke_result(env.request_id, ok=True, result=result).to_json())
     except Exception as e:
         log.exception("capability handler raised")
+        await ws.send(invoke_result(env.request_id, ok=False, error=str(e)).to_json())
+
+
+# ---- expose mode (Phase 7.0) ---------------------------------------------
+
+@dataclass
+class ZhubExposure:
+    """Returned by expose(). A device-only registration: not paired with
+    any specific AI; any AI on the hub can invoke this exposure's
+    capabilities via /exposures/<id>/invoke."""
+    name: str
+    hub_url: str
+    client_manifest: Manifest
+    capabilities: dict[str, CapabilityHandler]
+    exposure_id: str = ""
+    device_key: str = ""
+    _task: Optional[asyncio.Task] = None
+    _ws: Any = None
+    _stop_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+def expose(
+    name: str,
+    capabilities: dict[str, tuple[dict[str, Any], CapabilityHandler]],
+    hub_url: str = "ws://localhost:8080",
+    description: str = "",
+    public: bool = True,
+    operator: str = "",
+    device_key: Optional[str] = None,
+) -> ZhubExposure:
+    """Register device capabilities on a hub WITHOUT pairing to any one AI.
+    Returns a ZhubExposure with `exposure_id` and `device_key` populated
+    after the WS handshake. Re-registration: pass back the same
+    `device_key` to keep the same `exposure_id` across hub restarts."""
+    cm = Manifest(
+        name=name,
+        description=description or f"device: {name}",
+        operator=operator,
+        capabilities=[
+            Capability(name=cap_name, description="", schema=schema)
+            for cap_name, (schema, _) in capabilities.items()
+        ],
+        public=public,
+    )
+    handlers = {n: h for n, (_, h) in capabilities.items()}
+    exp = ZhubExposure(
+        name=name,
+        hub_url=hub_url,
+        client_manifest=cm,
+        capabilities=handlers,
+    )
+
+    async def _serve_one_session(url: str) -> None:
+        async with websockets.connect(url, max_size=10_000_000) as ws:
+            exp._ws = ws
+            manifest_dict = cm.to_dict()
+            register_key = exp.device_key or device_key
+            await ws.send(register_exposure(name, manifest_dict, register_key).to_json())
+            async for raw in ws:
+                env = Envelope.from_json(raw)
+                if env.type == "exposure-registered":
+                    exp.exposure_id = env.payload.get("exposure_id", "")
+                    new_key = env.payload.get("device_key", "")
+                    if new_key:
+                        exp.device_key = new_key
+                    log.info("exposure registered as %s with key %s",
+                             exp.exposure_id, exp.device_key[:10] + "…")
+                elif env.type == "invoke-request":
+                    asyncio.create_task(_handle_exposure_invoke(exp, ws, env))
+                elif env.type == "error":
+                    log.warning("hub error on expose: %s", env.payload)
+                    if env.payload.get("code") == "register_failed":
+                        raise AuthError(env.payload.get("message", "register failed"))
+
+    async def runner() -> None:
+        url = _to_ws_url(hub_url, "/ws/expose")
+        backoff = 1.0
+        while not exp._stop_event.is_set():
+            try:
+                log.info("expose connecting to %s", url)
+                await _serve_one_session(url)
+                backoff = 1.0
+            except AuthError:
+                log.error("expose registration failed — stopping reconnect loop")
+                return
+            except Exception as e:
+                log.warning("expose session ended: %s — reconnecting in %.1fs", e, backoff)
+            if exp._stop_event.is_set():
+                return
+            try:
+                await asyncio.wait_for(exp._stop_event.wait(), timeout=backoff)
+            except asyncio.TimeoutError:
+                pass
+            backoff = min(backoff * 2.0, 60.0)
+
+    exp._task = asyncio.ensure_future(runner())
+    return exp
+
+
+async def _handle_exposure_invoke(exp: ZhubExposure, ws, env: Envelope) -> None:
+    capability = env.payload.get("capability", "")
+    args = env.payload.get("args", {})
+    handler = exp.capabilities.get(capability)
+    if handler is None:
+        await ws.send(invoke_result(env.request_id, ok=False,
+                                    error=f"capability '{capability}' not exposed").to_json())
+        return
+    try:
+        result = handler(args)
+        if asyncio.iscoroutine(result):
+            result = await result
+        await ws.send(invoke_result(env.request_id, ok=True, result=result).to_json())
+    except Exception as e:
+        log.exception("exposure capability handler raised")
         await ws.send(invoke_result(env.request_id, ok=False, error=str(e)).to_json())

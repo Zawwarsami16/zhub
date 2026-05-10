@@ -58,6 +58,15 @@ class Storage:
         added_at    INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_extensions_section ON entity_extensions(section);
+    CREATE TABLE IF NOT EXISTS exposures (
+        exposure_id     TEXT PRIMARY KEY,
+        name            TEXT NOT NULL,
+        manifest_json   TEXT NOT NULL,
+        device_key_hash TEXT NOT NULL,
+        first_seen      INTEGER NOT NULL,
+        last_seen       INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_exposures_key ON exposures(device_key_hash);
     """
 
     def __init__(self, path: str | Path = "zhub.db") -> None:
@@ -200,6 +209,70 @@ class Storage:
             cur = self._conn.execute("SELECT COUNT(*) FROM entity_extensions")
             return int(cur.fetchone()[0])
 
+    # ---- exposures (Phase 7.0) -------------------------------------------
+
+    def add_exposure(self, name: str, manifest: dict[str, Any],
+                     device_key_hash: str,
+                     exposure_id: Optional[str] = None) -> str:
+        """Insert a new exposure. If exposure_id is None, mints a fresh `ex_...`.
+        Returns the exposure_id."""
+        import secrets as _secrets
+        eid = exposure_id or "ex_" + _secrets.token_urlsafe(8)
+        now = int(time.time())
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO exposures (exposure_id, name, manifest_json, "
+                "device_key_hash, first_seen, last_seen) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (eid, name, json.dumps(manifest), device_key_hash, now, now),
+            )
+            self._conn.commit()
+        return eid
+
+    def lookup_exposure(self, exposure_id: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT exposure_id, name, manifest_json, device_key_hash, "
+                "first_seen, last_seen FROM exposures WHERE exposure_id = ?",
+                (exposure_id,),
+            )
+            row = cur.fetchone()
+        return _exposure_row_to_dict(row)
+
+    def lookup_exposure_by_key_hash(self, device_key_hash: str) -> Optional[dict[str, Any]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT exposure_id, name, manifest_json, device_key_hash, "
+                "first_seen, last_seen FROM exposures WHERE device_key_hash = ?",
+                (device_key_hash,),
+            )
+            row = cur.fetchone()
+        return _exposure_row_to_dict(row)
+
+    def all_exposures(self) -> list[dict[str, Any]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT exposure_id, name, manifest_json, device_key_hash, "
+                "first_seen, last_seen FROM exposures ORDER BY first_seen ASC"
+            )
+            rows = cur.fetchall()
+        return [_exposure_row_to_dict(r) for r in rows if r]
+
+    def touch_exposure(self, exposure_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE exposures SET last_seen = ? WHERE exposure_id = ?",
+                (int(time.time()), exposure_id),
+            )
+            self._conn.commit()
+
+    def remove_exposure(self, exposure_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM exposures WHERE exposure_id = ?", (exposure_id,)
+            )
+            self._conn.commit()
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
@@ -207,3 +280,16 @@ class Storage:
 
 def hash_key(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _exposure_row_to_dict(row) -> Optional[dict[str, Any]]:
+    if row is None:
+        return None
+    return {
+        "exposure_id": row[0],
+        "name": row[1],
+        "manifest": json.loads(row[2]),
+        "device_key_hash": row[3],
+        "first_seen": row[4],
+        "last_seen": row[5],
+    }
