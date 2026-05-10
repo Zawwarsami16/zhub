@@ -93,7 +93,7 @@ async def main():
         ai_name=pub.name,
         api_key=pub.api_key,
         hub_url="ws://localhost:8080",
-        description="fake-loki",
+        description="fake-device",
         capabilities={
             "send_whatsapp": ({"type": "object"}, whatsapp_stub),
             "get_battery": ({"type": "object"}, battery_stub),

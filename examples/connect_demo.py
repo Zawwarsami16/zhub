@@ -1,5 +1,5 @@
 """
-Minimal connect-mode example — a fake "Loki" client that exposes a couple
+Minimal connect-mode example — a generic client that exposes a couple
 of capabilities back to the AI it connects to, AND can chat with the AI.
 
 Run order:
@@ -60,7 +60,7 @@ async def main():
         ai_name=ai_name,
         api_key=api_key,
         hub_url="ws://localhost:8080",
-        description="fake Loki — phone control surface",
+        description="generic client exposing demo capabilities",
         operator="demo",
         capabilities={
             "send_whatsapp": (WHATSAPP_SCHEMA, send_whatsapp_stub),
@@ -76,7 +76,7 @@ async def main():
 
     # send a chat request
     print("--- sending chat request ---")
-    resp = await conn.chat(messages=[{"role": "user", "content": "hello from fake-loki"}])
+    resp = await conn.chat(messages=[{"role": "user", "content": "hello from fake-device"}])
     print(f"AI replied: {resp.get('text')}")
     print()
     print("now idling — AI can invoke send_whatsapp / get_battery via the hub")

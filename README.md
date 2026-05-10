@@ -8,7 +8,7 @@ In Production
 
 ## What this is
 
-Today, when you build a custom AI (ZAI, an autonomous agent, a fine-tuned local model, anything), exposing it to the rest of the world means writing your own auth, your own tunnel, your own API gateway, your own client SDK. And once exposed, your AI has no idea who's connected to it or what those clients can do.
+Today, when you build a custom AI (an autonomous agent, a fine-tuned local model, an MCP server, anything), exposing it to the rest of the world means writing your own auth, your own tunnel, your own API gateway, your own client SDK. And once exposed, your AI has no idea who's connected to it or what those clients can do.
 
 `zhub` is a tiny library + a tiny hub server that fixes both halves at once:
 
@@ -40,7 +40,7 @@ curl http://localhost:8080/echo/v1/chat/completions \
 That covers the publish side. Now the bidirectional half:
 
 ```bash
-# 4. connect a client that exposes capabilities (e.g., fake Loki bridge)
+# 4. connect a client that exposes capabilities back to the AI
 AI_NAME=echo API_KEY=zk_... python examples/connect_demo.py
 # the client now exposes send_whatsapp, get_battery to the AI
 # the AI can invoke those capabilities through the hub
@@ -213,7 +213,7 @@ Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_conf
       "args": [
         "-m", "zhub.mcp_server",
         "--hub", "https://hub.example.com",
-        "--ai", "zai",
+        "--ai", "my-ai",
         "--key", "zk_xxxxxxxxxxxxxxxxx"
       ]
     }
@@ -221,7 +221,7 @@ Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_conf
 }
 ```
 
-Restart Claude Desktop and the AI shows up as a tool named `chat`. **Plus every capability the AI's connected clients expose** — `get_battery`, `send_whatsapp`, anything Loki or another client `connect()`s with — surfaces as its own MCP tool, callable directly from Claude. Same setup works for Cursor, Cline, and any other MCP host.
+Restart Claude Desktop and the AI shows up as a tool named `chat`. **Plus every capability the AI's connected clients expose** — `get_battery`, `send_whatsapp`, anything any client `connect()`s with — surfaces as its own MCP tool, callable directly from Claude. Same setup works for Cursor, Cline, and any other MCP host.
 
 For scripts that want to invoke a connected capability without going through chat, the hub also exposes a direct HTTP endpoint:
 
@@ -254,7 +254,7 @@ OLLAMA_HOST=http://localhost:11434 python examples/multi_brain_publisher.py --br
 python examples/multi_brain_publisher.py --list
 ```
 
-The publisher prints a `zk_` key on startup. Pocket / Loki / curl / Claude Desktop all reach it via `<hub>/<name>/v1/chat/completions` — restart the publisher with a different brain and **the key stays the same** (re-registration via persistence). External clients see no change; the brain underneath silently swaps.
+The publisher prints a `zk_` key on startup. Any client (browser BYOK app, native client, curl, Claude Desktop) reaches it via `<hub>/<name>/v1/chat/completions` — restart the publisher with a different brain and **the key stays the same** (re-registration via persistence). External clients see no change; the brain underneath silently swaps.
 
 Adapters live in `zhub/brains/` and implement a tiny `BrainAdapter` interface (one async streaming method). Adding a new brain is ~80 lines.
 
@@ -319,7 +319,7 @@ Shipped:
 
 - **0.1** — publish, connect, hub server, JSON manifest, OpenAI-compat proxy, capability invocation.
 - **0.2** — Cloudflare Tunnel auto-config (`--public-tunnel`).
-- **0.3** — Kotlin client library for Loki/JVM. JS/TS client (`js/`).
+- **0.3** — Kotlin client library for JVM/Android. JS/TS client (`js/`).
 - **0.4** — Streaming responses end-to-end (SSE through hub).
 - **0.5** — SQLite persistence, re-registration after restart, public registry UI.
 - **0.9** — Multi-AI council pattern.
@@ -339,7 +339,7 @@ Next:
 
 - Tool streaming via SSE (chunked tool_calls).
 - Multi-tier API keys + per-tier rate limits.
-- Real ZAI integration via `examples/zai_publish.py`.
+- True chunked tool_call deltas through SSE (Phase 4.2b).
 
 ---
 

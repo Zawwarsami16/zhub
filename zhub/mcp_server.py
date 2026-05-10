@@ -15,7 +15,7 @@ stdio transport spec. We implement the minimum needed for tools:
 Run:
 
     python -m zhub.mcp_server --hub https://hub.example.com \\
-                              --ai zai \\
+                              --ai my-ai \\
                               --key zk_xxxxxxxxxxxxxx
 """
 

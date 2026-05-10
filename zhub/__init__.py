@@ -11,7 +11,7 @@ Two modes:
 
     publish() — installed in the AI. Opens a persistent connection to the
                 hub, registers a manifest, awaits incoming chat requests.
-    connect() — installed in clients (Loki, Telegram bot, web chat, etc.).
+    connect() — installed in clients (a generic device, Telegram bot, web chat, etc.).
                 Registers the client's own capabilities back to the AI,
                 listens for invocations.
 
@@ -28,7 +28,7 @@ Quickstart:
     )
     pub.run_forever()
 
-    # Inside your client (e.g., Loki)
+    # Inside your client (e.g., a generic device)
     from zhub import connect
 
     conn = connect(
