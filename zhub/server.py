@@ -126,19 +126,43 @@ class Hub:
         # zero unbounded growth.
         from collections import deque as _deque
         self.recent_requests: _deque = _deque(maxlen=50)
+        # Phase 10.0: per-AI rolling latency ring buffer (last 200 samples)
+        # for nearest-rank percentile computation in /metrics. Bounded so
+        # /metrics stays cheap even at high request volume.
+        self._latency_rings: dict[str, _deque] = {}
 
     def bump(self, ai_name: str, key: str, delta: int = 1) -> None:
         self.metrics[ai_name][key] += delta
 
     def record_latency(self, ai_name: str, latency_ms: float) -> None:
-        """Track per-AI request latency. Stores total_ms + count for avg
-        and max for the obvious upper bound. Called by the access-log
+        """Track per-AI request latency. Stores total_ms + count for avg,
+        max for the obvious upper bound, and the last N samples in a
+        ring buffer for percentile computation. Called by the access-log
         middleware after every request whose path identifies an AI."""
         bucket = self.metrics[ai_name]
         bucket["request_count"] += 1
         bucket["total_latency_ms"] += int(latency_ms)
         if int(latency_ms) > bucket.get("max_latency_ms", 0):
             bucket["max_latency_ms"] = int(latency_ms)
+        from collections import deque as _deque
+        rb = self._latency_rings.get(ai_name)
+        if rb is None:
+            rb = _deque(maxlen=200)
+            self._latency_rings[ai_name] = rb
+        rb.append(int(latency_ms))
+
+    def compute_percentile(self, ai_name: str, p: int) -> int:
+        """Nearest-rank percentile from the per-AI ring buffer. p in
+        [0, 100]. Returns 0 when the buffer is empty."""
+        rb = self._latency_rings.get(ai_name)
+        if not rb:
+            return 0
+        sorted_samples = sorted(rb)
+        n = len(sorted_samples)
+        # nearest-rank: index = ceil(p/100 * n) - 1, clamped to [0, n-1]
+        import math as _math
+        idx = max(0, min(n - 1, _math.ceil(p / 100.0 * n) - 1))
+        return int(sorted_samples[idx])
 
     def check_rate_limit(self, ai_name: str, api_key: str) -> tuple[bool, Optional[float]]:
         """Returns (allowed, retry_after_seconds_or_None)."""
@@ -793,6 +817,9 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             count = entry.get("request_count", 0)
             total = entry.get("total_latency_ms", 0)
             entry["avg_latency_ms"] = (total // count) if count > 0 else 0
+            entry["p50_latency_ms"] = hub.compute_percentile(name, 50)
+            entry["p95_latency_ms"] = hub.compute_percentile(name, 95)
+            entry["p99_latency_ms"] = hub.compute_percentile(name, 99)
             by_ai[name] = entry
         for name, p in hub.publishers.items():
             entry = by_ai.setdefault(name, {})
@@ -839,6 +866,9 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             count = entry.get("request_count", 0)
             total = entry.get("total_latency_ms", 0)
             entry["avg_latency_ms"] = (total // count) if count > 0 else 0
+            entry["p50_latency_ms"] = hub.compute_percentile(name, 50)
+            entry["p95_latency_ms"] = hub.compute_percentile(name, 95)
+            entry["p99_latency_ms"] = hub.compute_percentile(name, 99)
             by_ai[name] = entry
         peers_env = os.environ.get("ZHUB_PEERS", "")
         peers = [p.strip() for p in peers_env.split(",") if p.strip()]

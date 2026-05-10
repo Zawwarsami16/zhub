@@ -94,8 +94,10 @@ Liveness probe. Returns `{status, publishers}`. No auth.
 ### `GET /metrics`
 Hub-wide counters (per-AI: chat_requests, rate_limited, peer_proxied,
 tool_calls_resolved, http_invoke, request_count, total_latency_ms,
-max_latency_ms, avg_latency_ms). Use to track who's hot, who's failing.
-No auth (snapshot only, no secrets).
+max_latency_ms, avg_latency_ms, **p50/p95/p99_latency_ms**). The
+percentiles come from a per-AI ring buffer of the last 200 latencies —
+recent behavior, not lifetime history. Use to track who's hot, who's
+failing, and where the tail is. No auth (snapshot only, no secrets).
 
 ### `GET /` and `GET /api/dashboard`
 `/` serves an HTML operator dashboard (auto-refresh 3s). `/api/dashboard`

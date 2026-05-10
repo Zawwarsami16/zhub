@@ -355,6 +355,7 @@ CI runs the Python suite on 3.10 / 3.11 / 3.12 plus the JS module test on every 
 | **More brains** | Cohere, Mistral, Together, Bedrock, Vertex, vLLM-direct |
 | ~~**MCP resources + prompts**~~ ✅ | Phase 9.0: publishers declare `resources=` and `prompts=` in `publish()`; the MCP bridge surfaces them as resources/list, resources/read, prompts/list, prompts/get |
 | ~~**Hub UI dashboard**~~ ✅ | Live view of connected publishers, recent requests, latency, exposed devices — at `/` (Phase 8.0) |
+| ~~**Latency percentiles**~~ ✅ | Phase 10.0: p50/p95/p99 per AI in `/metrics` + dashboard, from a 200-sample ring buffer |
 | **Multi-tier API keys** | Read / full / admin tiers per AI |
 | **Federation v2** | Signed peer relationships, shared identity registry across federated hubs |
 

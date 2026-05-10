@@ -124,8 +124,8 @@
     <section>
       <h2>publishers <span class="count" id="pub-count">0</span></h2>
       <table>
-        <thead><tr><th>name</th><th>brain · description</th><th class="r">chats</th><th class="r">avg/max ms</th><th class="r">conns</th><th>uptime</th></tr></thead>
-        <tbody id="pub-table"><tr><td colspan="6" class="empty">no publishers registered</td></tr></tbody>
+        <thead><tr><th>name</th><th>brain · description</th><th class="r">chats</th><th class="r">avg ms</th><th class="r">p95 / p99 / max</th><th class="r">conns</th><th>uptime</th></tr></thead>
+        <tbody id="pub-table"><tr><td colspan="7" class="empty">no publishers registered</td></tr></tbody>
       </table>
     </section>
 
@@ -204,7 +204,7 @@
         // publishers table
         if (d.publishers.length === 0) {
           $("pub-table").innerHTML =
-            '<tr><td colspan="6" class="empty">no publishers registered</td></tr>';
+            '<tr><td colspan="7" class="empty">no publishers registered</td></tr>';
         } else {
           $("pub-table").innerHTML = d.publishers.map(p => {
             const m = d.by_ai[p.name] || {};
@@ -216,7 +216,8 @@
               <td><strong>${p.name}</strong> ${visPill}</td>
               <td><small>${desc.replace(/</g, "&lt;")}</small></td>
               <td class="r">${m.chat_requests || 0}</td>
-              <td class="r">${m.avg_latency_ms || 0} / ${m.max_latency_ms || 0}</td>
+              <td class="r">${m.avg_latency_ms || 0}</td>
+              <td class="r"><small>${m.p95_latency_ms || 0} / ${m.p99_latency_ms || 0} / ${m.max_latency_ms || 0}</small></td>
               <td class="r">${p.connections}</td>
               <td><small>${fmtUptime(p.uptime_seconds)}</small></td>
             </tr>`;
