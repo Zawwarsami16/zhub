@@ -84,7 +84,25 @@ validated against the cap's JSON schema before invoke. Returns
 reasoning** — fastest path, lowest cost.
 
 ### `GET /entity`, `GET /entity/<section>`, `GET /entity/errors/<code>`
-This file. Served plain markdown.
+This file. Served plain markdown. The full file and per-section views
+also include any operator-added extensions for that hub.
+
+### `POST /entity/extend`
+Append an operator's own recipe to the entity. Auth: any registered
+publisher's `Bearer <api_key>`. Body: `{section, title, body}`. Caps:
+8 KB per body, 200 extensions per hub. Persists across restarts (only
+when the hub started with `--db <path>`). The extension surfaces in
+`GET /entity` (in an appendix), in `GET /entity/<section>` (appended
+inside the section), and in `GET /entity/errors/<code>` (when the
+title matches the code) — so any AI fetching the entity sees what
+this hub specifically has learned.
+
+### `GET /entity/extend`
+List all extensions on this hub. Same auth as POST. Returns
+`{extensions: [{id, section, title, body, added_by, added_at}]}`.
+
+### `DELETE /entity/extend/{id}`
+Remove an extension. Same auth.
 
 ### `WS /ws/publish`
 Publisher long-lived WebSocket. Send `register-publisher` first.

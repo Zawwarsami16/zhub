@@ -415,25 +415,27 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     # debug recipes, perf tips. Sectioned access for cheap lookups.
 
     import functools as _functools
+    import datetime as _datetime
     from pathlib import Path as _Path
 
+    # --- caps for operator-added entity extensions (Phase 4.1) ----------
+    _MAX_EXTENSION_BODY_BYTES = 8 * 1024
+    _MAX_EXTENSIONS = 200
+
     @_functools.lru_cache(maxsize=1)
-    def _entity_text() -> str:
+    def _shipped_entity_text() -> str:
         path = _Path(__file__).parent / "entity.md"
         try:
             return path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return "# zhub entity\n(entity.md missing in this install)\n"
 
-    def _entity_section(name: str) -> Optional[str]:
-        """Return the markdown subtree under `## <name>` (case-insensitive),
-        or None if no such section exists."""
-        text = _entity_text()
+    def _shipped_section(name: str) -> Optional[str]:
+        text = _shipped_entity_text()
         target = f"## {name.lower().strip()}"
-        lines = text.splitlines()
         out: list[str] = []
         capturing = False
-        for line in lines:
+        for line in text.splitlines():
             stripped = line.strip().lower()
             if stripped.startswith("## "):
                 if capturing:
@@ -446,11 +448,8 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 out.append(line)
         return "\n".join(out).rstrip() + "\n" if out else None
 
-    def _entity_error(code: str) -> Optional[str]:
-        """Return the markdown block under `### ... <code> ...` in the
-        ## errors section, or None. Matches the code as a substring anywhere
-        in the heading after stripping backticks/punctuation."""
-        section = _entity_section("errors")
+    def _shipped_error(code: str) -> Optional[str]:
+        section = _shipped_section("errors")
         if section is None:
             return None
         target = code.lower().strip()
@@ -471,6 +470,69 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 out.append(line)
         return "\n".join(out).rstrip() + "\n" if out else None
 
+    def _format_extension(ext: dict) -> str:
+        date = _datetime.datetime.fromtimestamp(ext["added_at"]).date().isoformat()
+        return (
+            f"### `{ext['title']}` *(user-added by {ext['added_by']} on {date})*\n"
+            f"{ext['body']}\n"
+        )
+
+    def _list_extensions(section: Optional[str] = None) -> list[dict[str, Any]]:
+        if hub.storage is None:
+            return []
+        return hub.storage.list_entity_extensions(section=section)
+
+    def _ext_matches_code(ext: dict, code: str) -> bool:
+        target = code.lower().strip()
+        title = ext["title"].lower().replace("`", " ").replace("'", " ")
+        tokens = title.split()
+        return target in tokens or title.strip() == target
+
+    def _entity_text() -> str:
+        base = _shipped_entity_text()
+        exts = _list_extensions()
+        if not exts:
+            return base
+        by_section: dict[str, list[dict]] = {}
+        for e in exts:
+            by_section.setdefault(e["section"], []).append(e)
+        appendix_lines = ["## extensions",
+                          "",
+                          "> Operator-added recipes for this specific hub deployment. "
+                          "Shipped recipes above always win on conflicts.",
+                          ""]
+        for section_name, items in by_section.items():
+            appendix_lines.append(f"### applied to: {section_name}")
+            appendix_lines.append("")
+            for e in items:
+                appendix_lines.append(_format_extension(e))
+        return base.rstrip() + "\n\n---\n\n" + "\n".join(appendix_lines).rstrip() + "\n"
+
+    def _entity_section(name: str) -> Optional[str]:
+        base = _shipped_section(name)
+        exts = _list_extensions(section=name)
+        if base is None and not exts:
+            return None
+        chunks: list[str] = []
+        if base:
+            chunks.append(base.rstrip())
+        for e in exts:
+            chunks.append(_format_extension(e).rstrip())
+        return "\n\n".join(chunks).rstrip() + "\n"
+
+    def _entity_error(code: str) -> Optional[str]:
+        base = _shipped_error(code)
+        exts = _list_extensions(section="errors")
+        matching = [e for e in exts if _ext_matches_code(e, code)]
+        if base is None and not matching:
+            return None
+        parts: list[str] = []
+        if base:
+            parts.append(base.rstrip())
+        for e in matching:
+            parts.append(_format_extension(e).rstrip())
+        return "\n\n".join(parts).rstrip() + "\n"
+
     @app.middleware("http")
     async def _add_entity_hint_header(request, call_next):
         """On any 4xx/5xx response whose status code has a recipe in
@@ -487,6 +549,61 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     @app.get("/entity")
     async def entity_full() -> PlainTextResponse:
         return PlainTextResponse(_entity_text(), media_type="text/markdown")
+
+    # --- entity extensions (Phase 4.1) ----------------------------------
+    # Operator-added recipes appended to the shipped entity. Auth: any
+    # registered publisher's bearer key. Persisted in SQLite so they
+    # survive hub restarts.
+
+    @app.post("/entity/extend")
+    async def entity_extend(request: Request) -> JSONResponse:
+        if hub.storage is None:
+            raise HTTPException(503, "entity extensions require a hub --db; "
+                                     "this hub started without persistence")
+        api_key = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        added_by = hub.lookup_by_api_key(api_key)
+        if not added_by:
+            raise HTTPException(401, "invalid api key — extension requires a "
+                                     "registered publisher's bearer key")
+        body = await request.json()
+        section = (body.get("section") or "").strip().lower()
+        title = (body.get("title") or "").strip()
+        ext_body = body.get("body") or ""
+        if not section or not title or not ext_body:
+            raise HTTPException(400, "missing required fields: section, title, body")
+        if len(ext_body.encode("utf-8")) > _MAX_EXTENSION_BODY_BYTES:
+            raise HTTPException(413,
+                f"body too large (max {_MAX_EXTENSION_BODY_BYTES} bytes)")
+        if hub.storage.count_entity_extensions() >= _MAX_EXTENSIONS:
+            raise HTTPException(429,
+                f"too many extensions (max {_MAX_EXTENSIONS}); delete some first")
+        eid = hub.storage.add_entity_extension(
+            section=section, title=title, body=ext_body, added_by=added_by,
+        )
+        return JSONResponse({
+            "id": eid, "section": section, "title": title, "added_by": added_by,
+        })
+
+    @app.get("/entity/extend")
+    async def entity_extend_list(request: Request) -> JSONResponse:
+        if hub.storage is None:
+            raise HTTPException(503, "entity extensions require a hub --db")
+        api_key = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not hub.lookup_by_api_key(api_key):
+            raise HTTPException(401, "invalid api key")
+        return JSONResponse({"extensions": hub.storage.list_entity_extensions()})
+
+    @app.delete("/entity/extend/{ext_id}")
+    async def entity_extend_delete(ext_id: int, request: Request) -> JSONResponse:
+        if hub.storage is None:
+            raise HTTPException(503, "entity extensions require a hub --db")
+        api_key = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not hub.lookup_by_api_key(api_key):
+            raise HTTPException(401, "invalid api key")
+        ok = hub.storage.delete_entity_extension(ext_id)
+        if not ok:
+            raise HTTPException(404, f"no extension with id {ext_id}")
+        return JSONResponse({"deleted": True, "id": ext_id})
 
     @app.get("/entity/errors/{code}")
     async def entity_error(code: str) -> PlainTextResponse:
