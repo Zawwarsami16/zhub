@@ -68,19 +68,19 @@ End to end: Linux VM hosting the hub + publisher → Cloudflare tunnel → Windo
 
 ## Why
 
-Today, exposing a custom AI (an agent, a fine-tuned local model, a custom RAG stack, an MCP server) to the rest of your tools means re-writing the same plumbing every time: auth, tunnel, API gateway, SDK, retries, MCP bridge, identity, federation.
+Every time you want a custom AI reachable from your tools — an agent, a local model, a RAG stack, an MCP server — you end up rewriting the same plumbing: auth, tunnel, API gateway, SDK, retries, MCP bridge, identity, federation. I got tired of that.
 
-`zhub` is the substrate that does all of that once. Whatever brain you have, plug it in. Whatever client you use (Pocket, Cursor, TypingMind, Continue, Claude Desktop, openai-py, curl), it just works — same OpenAI Chat Completions wire format.
+`zhub` does that plumbing once. Plug in any brain. Use any client (Pocket, Cursor, TypingMind, Claude Desktop, openai-py, curl) — they all speak OpenAI Chat Completions, and so does the hub.
 
-> **Substrate, not opinion.** zhub knows nothing about your AI's identity, your devices, your business logic. It routes bytes, multiplexes WebSockets, validates schemas, resolves tool calls, federates across hubs. The thing on top is yours.
+The hub stays neutral on purpose. It doesn't know your AI's identity, your devices, or your business logic. It routes bytes, holds keys, resolves tool calls, peers with other hubs. Whatever you put on top is yours, not zhub's.
 
 ### Origin
 
-I built zhub for my own private AI — **ZAI** — that I want reachable from everywhere: phone chat ([Pocket](https://github.com/Zawwarsami16/pocket)), laptop dev tools (Claude Desktop, Cursor), custom surfaces — without writing the same auth/tunnel/SDK plumbing five times. ZAI itself stays private. What made it interesting to *build the connector right* is what's open source here.
+zhub started as the connector for my own private AI, **ZAI**. I wanted ZAI reachable from anywhere: phone chat via [Pocket](https://github.com/Zawwarsami16/pocket), dev tools like Claude Desktop and Cursor, my own scripts, a friend's hub. After the third time writing the same auth + tunnel + SDK glue, I pulled it out into a library. That library is what you see here. ZAI itself stays private.
 
-I can't show ZAI directly, so the [LinkedIn demo](https://www.linkedin.com/in/zawwarsami) instead wraps a **Claude Code session** as a zhub publisher and reaches it from Pocket on a phone — same substrate, different brain. The screenshots above are a separate reproducible flow: a fresh `git clone` on a Linux virtual machine, a Groq brain published with the API key the user generated, and Windows PowerShell talking to it through the tunnel. Every screenshot, every URL, every response is from a real first-time install — nothing staged.
+I can't demo this on ZAI, so the [LinkedIn post](https://www.linkedin.com/in/zawwarsami) wraps a **Claude Code session** as a zhub publisher instead — same substrate, different brain — and reaches it from Pocket on a phone. The screenshots above are a separate, reproducible run: fresh `git clone` on a Linux VM, a Groq brain published in one command, Windows PowerShell talking through the Cloudflare tunnel. Nothing staged.
 
-The same primitive works for any AI — yours, mine, a model someone hasn't trained yet. zhub doesn't care.
+The same primitive works for whatever brain you point it at.
 
 ---
 
@@ -433,7 +433,7 @@ For larger changes, walk through `docs/superpowers/specs/` to see the design con
 
 ### Acknowledgments
 
-Built collaboratively with **Claude (Anthropic)** as a pair-programming partner. The git history is the trail — every commit is co-authored. Specs and plans live under `docs/superpowers/`. Architecture decisions, primitive choices, and the "substrate not product" stance were worked through in conversation; implementation followed strict spec → plan → TDD discipline. Same craftsmanship standard would have applied without an AI partner; with one, it shipped faster.
+Built side-by-side with **Claude (Anthropic)** as a pair-programming partner. The git history shows it — every commit co-authored, every spec under `docs/superpowers/`. Architecture, primitives, and the "stay neutral" decision were worked out in conversation. Implementation followed strict spec → plan → TDD. The same standard would've applied solo; with a partner it shipped faster.
 
 ---
 

@@ -93,11 +93,10 @@ that matches what you're actually doing on the other side.
 | Replies are empty | Outbox JSON missing `"text"` field | Watcher must write `{"text": "..."}` exactly |
 | Two watchers, double replies | Race | Run only one watcher per inbox |
 
-## Reasoning trace (why this exists)
+## Why this exists
 
-This pattern was originally invented mid-conversation as a way to talk
-to a Claude Code session running on a laptop from Pocket on a phone.
-It worked, but the hack lived in `/tmp/`. Promoting it to a proper
-example + this doc means future sessions don't have to rediscover it,
-and anyone cloning the repo can wrap their own interactive agent the
-same way.
+I wrote this the first time because I wanted to talk to a Claude Code
+session on my laptop from Pocket on my phone. The original lived in
+`/tmp/` as throwaway. After it kept working I moved it into the repo
+so I (and anyone else) wouldn't have to redo the trick from scratch
+every time.
