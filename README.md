@@ -380,7 +380,7 @@ CI runs the Python suite on 3.10 / 3.11 / 3.12 plus the JS module test on every 
 | | What |
 |---|---|
 | **~~4.2b~~** ✅ | True chunked tool_call delta streaming through SSE (default mode passes deltas through; `auto` mode also resolves+continues) |
-| **7.1** | Per-exposure access policies (whitelist of AI names / publisher keys) |
+| ~~**7.1**~~ ✅ | Phase 15.0: per-exposure `allow_publishers` access policies (whitelist of AI names; `[]` is kill switch; unset is open) |
 | ~~**More brains**~~ ✅ | Phase 11.0: Together, Mistral, Cohere added (8 total). Bedrock + Vertex remain (~80 LOC each via the shared OpenAI-compat helper) |
 | ~~**MCP resources + prompts**~~ ✅ | Phase 9.0: publishers declare `resources=` and `prompts=` in `publish()`; the MCP bridge surfaces them as resources/list, resources/read, prompts/list, prompts/get |
 | ~~**Hub UI dashboard**~~ ✅ | Live view of connected publishers, recent requests, latency, exposed devices — at `/` (Phase 8.0) |

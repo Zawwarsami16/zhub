@@ -194,9 +194,17 @@ Public-flagged exposures only. No auth. Returns
 `[{exposure_id, name, description, capabilities, uptime_seconds}]`.
 
 ### `POST /exposures/<id>/invoke`
-Auth: `Bearer <any registered publisher's zk_ key>`. Body:
+Auth: `Bearer <any registered publisher's zk_ key>`, subject to the
+exposure's optional `allow_publishers` access policy. Body:
 `{capability, args}`. Args validated against the exposure's declared
 JSON schema. Returns `{ok, result, exposure_id}`.
+
+The exposure's owner can pass `allow_publishers=["zai", "claude-here"]`
+at registration time to whitelist which AIs may invoke. A 403 is
+returned for callers not in the list. `allow_publishers=[]` (empty
+list) is a kill switch — nobody can invoke. Unset = open (default).
+The `/exposures` listing surfaces the policy when set so callers can
+discover whether they're permitted before attempting.
 
 ---
 

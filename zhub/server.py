@@ -386,13 +386,18 @@ class Hub:
         for eid, exp in self.exposures.items():
             if not exp.manifest.get("public"):
                 continue
-            out.append({
+            entry: dict[str, Any] = {
                 "exposure_id": eid,
                 "name": exp.name,
                 "description": exp.manifest.get("description", ""),
                 "capabilities": [c.get("name") for c in exp.manifest.get("capabilities", [])],
                 "uptime_seconds": int(time.time() - exp.created_at),
-            })
+            }
+            # Phase 15.0: surface the access policy when set so callers
+            # can discover whether they're permitted before invoking.
+            if exp.manifest.get("allow_publishers") is not None:
+                entry["allow_publishers"] = list(exp.manifest["allow_publishers"])
+            out.append(entry)
         return out
 
     async def invoke_exposure(self, exposure_id: str, capability: str,
@@ -1211,17 +1216,25 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     @app.post("/exposures/{exposure_id}/invoke")
     async def invoke_exposure_http(exposure_id: str, request: Request):
         """Direct HTTP invocation of a device-only exposure. Auth: any
-        registered publisher's bearer key — exposures aren't paired to
-        one AI, so any AI on the hub may use them. JSON-Schema validation
-        runs the same way it does for connected-client capabilities."""
+        registered publisher's bearer key (subject to the exposure's
+        allow_publishers policy if set). JSON-Schema validation runs
+        the same way it does for connected-client capabilities."""
         body = await request.json()
         api_key = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-        if not hub.lookup_by_api_key(api_key):
+        caller_ai = hub.lookup_by_api_key(api_key)
+        if not caller_ai:
             raise HTTPException(401, "invalid api key — invoke requires "
                                      "any registered publisher's bearer key")
         exp = hub.exposures.get(exposure_id)
         if exp is None:
             raise HTTPException(404, f"exposure '{exposure_id}' not found")
+        # Phase 15.0: per-exposure access policy. None = open (current
+        # behavior); list = whitelist, including [] = kill switch.
+        allow = exp.manifest.get("allow_publishers")
+        if allow is not None and caller_ai not in allow:
+            raise HTTPException(403,
+                f"publisher '{caller_ai}' is not in this exposure's "
+                f"allow_publishers list")
         capability = body.get("capability") or ""
         args = body.get("args") or {}
         if not capability:

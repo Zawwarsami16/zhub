@@ -530,11 +530,20 @@ def expose(
     public: bool = True,
     operator: str = "",
     device_key: Optional[str] = None,
+    allow_publishers: Optional[list[str]] = None,
 ) -> ZhubExposure:
     """Register device capabilities on a hub WITHOUT pairing to any one AI.
     Returns a ZhubExposure with `exposure_id` and `device_key` populated
     after the WS handshake. Re-registration: pass back the same
-    `device_key` to keep the same `exposure_id` across hub restarts."""
+    `device_key` to keep the same `exposure_id` across hub restarts.
+
+    `allow_publishers`: optional access policy. Distinguishes three states:
+      - None / not passed → any registered publisher's bearer key can
+        invoke (current default, backwards compatible).
+      - List of names → only those publishers may invoke; others get 403.
+      - Empty list `[]` → kill switch. Nobody can invoke. Useful for
+        temporarily quarantining a device without unregistering it.
+    """
     cm = Manifest(
         name=name,
         description=description or f"device: {name}",
@@ -557,6 +566,8 @@ def expose(
         async with websockets.connect(url, max_size=10_000_000) as ws:
             exp._ws = ws
             manifest_dict = cm.to_dict()
+            if allow_publishers is not None:
+                manifest_dict["allow_publishers"] = list(allow_publishers)
             register_key = exp.device_key or device_key
             await ws.send(register_exposure(name, manifest_dict, register_key).to_json())
             async for raw in ws:
