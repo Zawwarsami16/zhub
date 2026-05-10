@@ -23,6 +23,8 @@ pip install -e '.[server,brains]'
 GROQ_API_KEY=gsk_... zhub up
 ```
 
+> **First time?** A 10-minute hands-on walkthrough lives at [`docs/TUTORIAL.md`](docs/TUTORIAL.md) — clone to "Pocket talks to your AI" in a single sitting.
+
 (`zhub up` is the installed CLI; `python -m zhub up` is the equivalent module form when the script isn't on PATH.)
 
 Output:

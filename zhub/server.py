@@ -51,6 +51,62 @@ from .protocol import (
 
 log = logging.getLogger("zhub.server")
 access_log = logging.getLogger("zhub.access")
+
+
+def _render_prometheus(
+    hub_id: str, uptime: int, publishers: int, connections: int,
+    exposures: int, by_ai: dict[str, dict[str, Any]],
+) -> str:
+    """Render the metrics snapshot as Prometheus text exposition format.
+
+    Hub-wide metrics are emitted as gauges. Per-AI counters use the `ai`
+    label. We follow OpenMetrics naming: `zhub_<metric>_total` for
+    monotonic counters, `zhub_<metric>` for gauges. Counter helpers
+    declared once at the top of each metric block.
+    """
+    def esc(s: str) -> str:
+        # Prometheus label values: backslash, newline, double-quote escape
+        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+
+    lines: list[str] = []
+
+    lines.append("# HELP zhub_uptime_seconds Hub process uptime in seconds.")
+    lines.append("# TYPE zhub_uptime_seconds gauge")
+    lines.append(f"zhub_uptime_seconds {uptime}")
+    lines.append("# HELP zhub_publishers Currently registered publishers.")
+    lines.append("# TYPE zhub_publishers gauge")
+    lines.append(f"zhub_publishers {publishers}")
+    lines.append("# HELP zhub_connections Currently registered connections (across all AIs).")
+    lines.append("# TYPE zhub_connections gauge")
+    lines.append(f"zhub_connections {connections}")
+    lines.append("# HELP zhub_exposures Currently registered capability-only exposures.")
+    lines.append("# TYPE zhub_exposures gauge")
+    lines.append(f"zhub_exposures {exposures}")
+
+    # Per-AI metrics
+    counter_specs = [
+        ("zhub_chat_requests_total",       "chat_requests",       "counter", "Total chat completions handled per AI."),
+        ("zhub_rate_limited_total",         "rate_limited",        "counter", "Requests rejected with 429 per AI."),
+        ("zhub_peer_proxied_total",         "peer_proxied",        "counter", "Requests proxied to a federated peer hub per AI."),
+        ("zhub_tool_calls_resolved_total",  "tool_calls_resolved", "counter", "Tool calls auto-resolved by the hub per AI."),
+        ("zhub_http_invoke_total",          "http_invoke",         "counter", "Direct /v1/invoke calls per AI."),
+        ("zhub_request_count_total",        "request_count",       "counter", "All HTTP requests with a recognized AI tag."),
+        ("zhub_max_latency_ms",             "max_latency_ms",      "gauge",   "Per-AI max latency observed (ms)."),
+        ("zhub_avg_latency_ms",             "avg_latency_ms",      "gauge",   "Per-AI average latency (ms)."),
+        ("zhub_p50_latency_ms",             "p50_latency_ms",      "gauge",   "Per-AI p50 latency (ms) over the last 200 samples."),
+        ("zhub_p95_latency_ms",             "p95_latency_ms",      "gauge",   "Per-AI p95 latency (ms) over the last 200 samples."),
+        ("zhub_p99_latency_ms",             "p99_latency_ms",      "gauge",   "Per-AI p99 latency (ms) over the last 200 samples."),
+        ("zhub_connections_per_ai",         "connections",         "gauge",   "Per-AI live connection count."),
+        ("zhub_uptime_seconds_per_ai",      "uptime_seconds",      "gauge",   "Per-AI publisher uptime (seconds)."),
+    ]
+    for prom_name, key, prom_type, help_text in counter_specs:
+        lines.append(f"# HELP {prom_name} {help_text}")
+        lines.append(f"# TYPE {prom_name} {prom_type}")
+        for ai_name, entry in by_ai.items():
+            v = entry.get(key, 0)
+            lines.append(f'{prom_name}{{ai="{esc(ai_name)}"}} {v}')
+
+    return "\n".join(lines) + "\n"
 # Make sure access logs appear by default — uvicorn's default config
 # leaves the root logger at WARNING for app loggers.
 if not access_log.handlers:
@@ -901,8 +957,13 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         return PlainTextResponse(body, media_type="text/markdown")
 
     @app.get("/metrics")
-    async def metrics() -> JSONResponse:
-        """Best-effort observability snapshot. Counters reset on hub restart."""
+    async def metrics(request: Request):
+        """Best-effort observability snapshot. Counters reset on hub restart.
+
+        Default format is JSON. Pass `?format=prometheus` for the standard
+        Prometheus text-exposition format consumable by Prometheus,
+        VictoriaMetrics, Datadog OpenMetrics, etc.
+        """
         by_ai: dict[str, dict[str, Any]] = {}
         for name, counts in hub.metrics.items():
             entry = dict(counts)
@@ -917,11 +978,22 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             entry = by_ai.setdefault(name, {})
             entry["connections"] = len(hub.connections_by_ai.get(name, {}))
             entry["uptime_seconds"] = int(time.time() - p.created_at)
+
+        uptime = int(time.time() - hub.started_at)
+        n_pub = len(hub.publishers)
+        n_conn = sum(len(c) for c in hub.connections_by_ai.values())
+
+        if request.query_params.get("format") == "prometheus":
+            return PlainTextResponse(
+                _render_prometheus(hub.hub_id, uptime, n_pub, n_conn,
+                                    len(hub.exposures), by_ai),
+                media_type="text/plain; version=0.0.4",
+            )
         return JSONResponse({
             "hub_id": hub.hub_id,
-            "uptime_seconds": int(time.time() - hub.started_at),
-            "publishers": len(hub.publishers),
-            "connections": sum(len(c) for c in hub.connections_by_ai.values()),
+            "uptime_seconds": uptime,
+            "publishers": n_pub,
+            "connections": n_conn,
             "by_ai": by_ai,
         })
 
