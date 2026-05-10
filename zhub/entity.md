@@ -269,14 +269,23 @@ returns final text. You get one round-trip externally even if the LLM
 took multiple internal turns.
 
 ### **Streaming for long responses**
-Add `"stream": true`. Hub returns OpenAI SSE chunks. Tool calls in
-streaming mode: by default the SSE stream just forwards text chunks
-(no tool resolution). Opt in to **pre-resolve mode** with
-`X-Zhub-Stream-Tools: pre-resolve` and the hub will run the full
-non-streaming auto-resolve loop internally, then emit the resolved
-final text as one SSE chunk + done. Trades stream-latency for tool
-correctness; useful when the brain might emit `tool_calls` and you
-want the resolved answer over SSE.
+Add `"stream": true`. Hub returns OpenAI SSE chunks. Three modes for
+how tool_calls are handled in streaming responses, controlled by the
+`X-Zhub-Stream-Tools` header:
+
+- **(unset, default)** — tool_call deltas pass through as standard
+  OpenAI SSE chunks (`delta.tool_calls`). Client handles them. Hub
+  doesn't auto-resolve. Matches what Cursor / Continue / native
+  OpenAI SDK with `stream=True` expect.
+- **`auto`** — pass deltas through AND when `finish_reason: tool_calls`
+  arrives, hub auto-invokes connected capabilities + exposures in
+  parallel, appends a `role: tool` message, re-asks the publisher,
+  and continues the same SSE stream with the follow-up. Bounded at
+  4 hops.
+- **`pre-resolve`** — buffer the full publisher response, run the
+  non-streaming auto-resolve loop, emit the resolved final text as
+  one SSE chunk + done. Trades stream latency for absolute correctness
+  before any byte goes back to the client.
 
 ### **Cross-hub federation**
 Configure `ZHUB_PEERS=http://hub-b.example.com,http://hub-c.example.com`

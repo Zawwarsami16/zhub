@@ -100,13 +100,31 @@ class GroqAdapter(BrainAdapter):
                 if not choices:
                     continue
                 choice = choices[0]
-                delta = (choice.get("delta") or {}).get("content") or ""
+                delta_obj = choice.get("delta") or {}
+                content = delta_obj.get("content") or ""
                 finish = choice.get("finish_reason")
-                yield ChatChunk(
-                    delta=delta,
-                    done=bool(finish),
-                    finish_reason=finish,
-                    raw=data,
-                )
+                tool_call_deltas = delta_obj.get("tool_calls") or []
+                # OpenAI-shape: each delta.tool_calls element is one
+                # tool-call's incremental update. Surface each as its own
+                # ChatChunk so downstream sees them in arrival order.
+                for tcd in tool_call_deltas:
+                    yield ChatChunk(
+                        delta="",
+                        done=False,
+                        tool_call_delta=tcd,
+                        raw=data,
+                    )
+                if content:
+                    yield ChatChunk(
+                        delta=content,
+                        done=False,
+                        raw=data,
+                    )
                 if finish:
+                    yield ChatChunk(
+                        delta="",
+                        done=True,
+                        finish_reason=finish,
+                        raw=data,
+                    )
                     return

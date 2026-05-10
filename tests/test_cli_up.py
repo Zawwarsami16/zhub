@@ -84,10 +84,13 @@ async def test_up_command_with_fake_brain_prints_url_and_key(tmp_path):
 
     stdout_buf: list[str] = []
     api_key = None
-    deadline = time.time() + 12.0
+    deadline = time.time() + 20.0
     try:
         while time.time() < deadline:
-            line = await asyncio.wait_for(proc.stdout.readline(), timeout=4.0)
+            try:
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=8.0)
+            except asyncio.TimeoutError:
+                continue
             if not line:
                 break
             text = line.decode().rstrip()

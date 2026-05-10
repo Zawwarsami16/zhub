@@ -237,6 +237,45 @@ def publish(
     return pub
 
 
+def _serialize_stream_chunk(chunk: Any, request_id: str) -> str:
+    """Phase 4.2b: a chat_handler async-gen may yield strings (text deltas,
+    today's path) OR ChatChunk-shaped objects / dicts (text + tool_call
+    deltas). Emit the appropriate WS envelope."""
+    if isinstance(chunk, str):
+        return chat_chunk(chunk, request_id).to_json()
+    payload: dict[str, Any] = {}
+    # ChatChunk dataclass
+    if hasattr(chunk, "delta") or hasattr(chunk, "tool_call_delta"):
+        delta = getattr(chunk, "delta", "") or ""
+        tcd = getattr(chunk, "tool_call_delta", None)
+        done = bool(getattr(chunk, "done", False))
+        finish = getattr(chunk, "finish_reason", None)
+        if delta:
+            payload["delta"] = delta
+        if tcd:
+            payload["tool_call_delta"] = tcd
+        payload["done"] = done
+        if finish:
+            payload["finish_reason"] = finish
+    elif isinstance(chunk, dict):
+        payload = dict(chunk)
+        payload.setdefault("done", False)
+    else:
+        payload = {"delta": str(chunk), "done": False}
+    return Envelope(type="chat-chunk", request_id=request_id, payload=payload).to_json()
+
+
+def _chunk_to_text(chunk: Any) -> str:
+    """For non-streaming accumulation: extract just the text fragment."""
+    if isinstance(chunk, str):
+        return chunk
+    if hasattr(chunk, "delta"):
+        return getattr(chunk, "delta", "") or ""
+    if isinstance(chunk, dict):
+        return chunk.get("delta", "") or ""
+    return str(chunk)
+
+
 async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
     import inspect
 
@@ -254,13 +293,13 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
         if inspect.isasyncgen(result):
             if streaming_requested:
                 async for chunk in result:
-                    await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
+                    await ws.send(_serialize_stream_chunk(chunk, env.request_id))
                 await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
                 return
             else:
                 accumulated = []
                 async for chunk in result:
-                    accumulated.append(str(chunk))
+                    accumulated.append(_chunk_to_text(chunk))
                 payload = {"text": "".join(accumulated), "finish_reason": "stop"}
                 await ws.send(Envelope(type="chat-response", request_id=env.request_id, payload=payload).to_json())
                 return

@@ -19,16 +19,22 @@ class ChatChunk:
     """One incremental piece of a streaming chat response.
 
     delta: incremental text emitted in this chunk (may be empty when the
-        chunk only signals end-of-stream).
+        chunk only signals end-of-stream or carries a tool_call_delta).
     done: True on the final chunk.
-    finish_reason: standard reason string ("stop", "length", etc.) on the
-        final chunk; None elsewhere.
+    finish_reason: standard reason string ("stop", "tool_calls", "length",
+        etc.) on the final chunk; None elsewhere.
+    tool_call_delta: when set, this chunk represents an incremental
+        OpenAI-shape tool_call delta (Phase 4.2b). Either delta or
+        tool_call_delta will be non-empty, not both.
+        Shape: {index, id?, type?, function: {name?, arguments?}}.
+        Argument fragments concatenate across multiple chunks.
     raw: the underlying API's chunk dict, kept for debugging.
     """
 
     delta: str = ""
     done: bool = False
     finish_reason: Optional[str] = None
+    tool_call_delta: Optional[dict] = None
     raw: Optional[dict] = None
 
 

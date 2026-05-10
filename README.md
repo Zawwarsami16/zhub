@@ -344,7 +344,7 @@ CI runs the Python suite on 3.10 / 3.11 / 3.12 plus the JS module test on every 
 
 | | What |
 |---|---|
-| **4.2b** | True chunked tool_call delta streaming through SSE (today: pre-resolve mode) |
+| **~~4.2b~~** ✅ | True chunked tool_call delta streaming through SSE (default mode passes deltas through; `auto` mode also resolves+continues) |
 | **7.1** | Per-exposure access policies (whitelist of AI names / publisher keys) |
 | **More brains** | Cohere, Mistral, Together, Bedrock, Vertex, vLLM-direct |
 | **MCP resources + prompts** | Surface zhub-served files & prompts to MCP hosts, beyond just tools |

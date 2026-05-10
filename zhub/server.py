@@ -1364,6 +1364,12 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
                 )
 
+            # Phase 4.2b: chunked tool_call delta passthrough (default)
+            # plus optional `auto` mode that auto-resolves and continues
+            # the SSE stream with the follow-up publisher response.
+            auto_mode = stream_tools_mode == "auto"
+            tool_resolve_mode = request.headers.get("x-zhub-tool-resolve", "auto").lower()
+
             try:
                 response = await hub.proxy_chat(
                     ai_name, messages, model, temperature, max_tokens, stream=True,
@@ -1372,47 +1378,156 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             except LookupError:
                 raise HTTPException(404, "AI offline")
 
-            queue: asyncio.Queue = response["_stream_queue"]
-            request_id = response["_request_id"]
+            initial_queue: asyncio.Queue = response["_stream_queue"]
+            initial_request_id = response["_request_id"]
+
+            async def _resolve_streamed_tool_calls(
+                tool_calls: list[dict],
+            ) -> tuple[list[dict], list[dict]]:
+                """Run the same parallel resolve as the non-streaming path
+                against connected capabilities. Returns
+                (assistant_msg, tool_msgs) ready to append to a follow-up
+                chat-request. Reuses validate_schema + invoke_capability."""
+                async def _resolve_one(tc: dict) -> dict:
+                    fn = tc.get("function") or {}
+                    cap_name = fn.get("name", "")
+                    args_raw = fn.get("arguments", "{}")
+                    try:
+                        args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                    except (ValueError, TypeError):
+                        args = {}
+                    conn_id = hub.find_capability_connection(ai_name, cap_name)
+                    if conn_id is None:
+                        return {"id": tc.get("id"), "name": cap_name,
+                                "result": {"error": f"capability '{cap_name}' not connected"}}
+                    schema = hub.find_capability_schema(ai_name, cap_name)
+                    val_errors = validate_schema(args, schema) if schema else []
+                    if val_errors:
+                        return {"id": tc.get("id"), "name": cap_name,
+                                "result": {"error": "validation failed: " + "; ".join(val_errors)}}
+                    try:
+                        relayed = await hub.invoke_capability(ai_name, conn_id, cap_name, args)
+                        if isinstance(relayed, dict) and "ok" in relayed:
+                            if relayed.get("ok"):
+                                result = relayed.get("result")
+                                if result is None:
+                                    result = {"ok": True}
+                            else:
+                                result = {"error": relayed.get("error") or "invoke failed"}
+                        else:
+                            result = relayed
+                    except Exception as e:
+                        result = {"error": str(e)}
+                    return {"id": tc.get("id"), "name": cap_name, "result": result}
+
+                resolved = await asyncio.gather(*(_resolve_one(tc) for tc in tool_calls))
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": tool_calls,
+                }
+                tool_msgs = []
+                for entry in resolved:
+                    hub.bump(ai_name, "tool_calls_resolved")
+                    tool_msgs.append({
+                        "role": "tool",
+                        "tool_call_id": entry["id"],
+                        "name": entry["name"],
+                        "content": json.dumps(entry["result"]),
+                    })
+                return assistant_msg, tool_msgs
 
             async def event_stream():
                 created = int(time.time())
                 completion_id = "chatcmpl-" + new_request_id()[:16]
+                running_messages = list(messages)
+                queue = initial_queue
+                iters = 0
                 while True:
-                    chunk = await queue.get()
-                    if chunk is None:
-                        break
-                    delta_text = chunk.get("delta", "")
-                    done = chunk.get("done", False)
-                    finish_reason = chunk.get("finish_reason")
-                    if done:
-                        # final chunk per OpenAI streaming spec
-                        sse = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created,
-                            "model": model,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {},
-                                "finish_reason": finish_reason or "stop",
-                            }],
-                        }
-                        yield f"data: {json.dumps(sse)}\n\n"
-                        yield "data: [DONE]\n\n"
-                        break
+                    accumulated_tool_calls = {}
+                    final_finish = "stop"
+                    while True:
+                        chunk = await queue.get()
+                        if chunk is None:
+                            break
+                        tcd = chunk.get("tool_call_delta")
+                        text = chunk.get("delta", "")
+                        done = chunk.get("done", False)
+                        finish = chunk.get("finish_reason")
+                        if tcd:
+                            idx = tcd.get("index", 0)
+                            slot = accumulated_tool_calls.setdefault(idx, {"function": {}})
+                            if "id" in tcd:
+                                slot["id"] = tcd["id"]
+                            if "type" in tcd:
+                                slot["type"] = tcd["type"]
+                            fn_in = tcd.get("function") or {}
+                            if "name" in fn_in:
+                                slot.setdefault("function", {})["name"] = fn_in["name"]
+                            if "arguments" in fn_in:
+                                slot.setdefault("function", {}).setdefault("arguments", "")
+                                slot["function"]["arguments"] += fn_in["arguments"]
+                            sse = {
+                                "id": completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": created, "model": model,
+                                "choices": [{"index": 0,
+                                             "delta": {"tool_calls": [tcd]},
+                                             "finish_reason": None}],
+                            }
+                            yield f"data: {json.dumps(sse)}\n\n"
+                            continue
+                        if text:
+                            sse = {
+                                "id": completion_id,
+                                "object": "chat.completion.chunk",
+                                "created": created, "model": model,
+                                "choices": [{"index": 0,
+                                             "delta": {"role": "assistant", "content": text},
+                                             "finish_reason": None}],
+                            }
+                            yield f"data: {json.dumps(sse)}\n\n"
+                        if done:
+                            final_finish = finish or "stop"
+                            break
+
+                    if (auto_mode and final_finish == "tool_calls"
+                            and accumulated_tool_calls
+                            and tool_resolve_mode != "client"
+                            and iters < 4):
+                        tool_calls_list = [
+                            accumulated_tool_calls[i]
+                            for i in sorted(accumulated_tool_calls)
+                        ]
+                        assistant_msg, tool_msgs = await _resolve_streamed_tool_calls(
+                            tool_calls_list,
+                        )
+                        running_messages = running_messages + [assistant_msg] + tool_msgs
+                        try:
+                            next_resp = await hub.proxy_chat(
+                                ai_name, running_messages, model,
+                                temperature, max_tokens, stream=True,
+                                tools=merged_tools or None,
+                                tool_choice=tool_choice,
+                            )
+                        except LookupError:
+                            yield "data: [DONE]\n\n"
+                            return
+                        queue = next_resp["_stream_queue"]
+                        iters += 1
+                        continue
+
+                    # done — emit final finish + DONE
                     sse = {
                         "id": completion_id,
                         "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": model,
-                        "choices": [{
-                            "index": 0,
-                            "delta": {"role": "assistant", "content": delta_text},
-                            "finish_reason": None,
-                        }],
+                        "created": created, "model": model,
+                        "choices": [{"index": 0, "delta": {},
+                                     "finish_reason": final_finish}],
                     }
                     yield f"data: {json.dumps(sse)}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
 
             return StreamingResponse(
                 event_stream(),
