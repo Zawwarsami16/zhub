@@ -1058,6 +1058,22 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             html = "<h1>zhub</h1><p>dashboard.html missing</p>"
         return HTMLResponse(html)
 
+    @app.get("/chat")
+    async def chat_html():
+        """Built-in OpenAI-compat chat client. Self-contained single-file
+        HTML; auto-detects the local hub's only-publisher (when exactly
+        one), otherwise prompts the operator to paste URL+key. Settings
+        persist in localStorage. Pure browser; no backend coupling beyond
+        the standard chat completions endpoint and SSE streaming."""
+        from pathlib import Path as _Path
+        from fastapi.responses import HTMLResponse
+        path = _Path(__file__).parent / "chat.html"
+        try:
+            html = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            html = "<h1>zhub chat</h1><p>chat.html missing</p>"
+        return HTMLResponse(html)
+
     @app.get("/registry")
     async def registry() -> JSONResponse:
         listings = []

@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>zhub · chat</title>
+  <style>
+    :root {
+      --bg-0: #02050d;
+      --bg-1: #060a1a;
+      --panel: rgba(10, 18, 40, 0.65);
+      --panel-edge: rgba(0, 200, 255, 0.18);
+      --grid: #0a1330;
+      --text: #e0f0ff;
+      --dim: #5d7aa3;
+      --blue: #00b4ff;
+      --cyan: #00f0ff;
+      --red: #ff2860;
+      --green: #00ff95;
+      --user: #00f0ff;
+      --ai: #00ff95;
+      --tool: #ffae00;
+      --err: #ff5080;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      background: radial-gradient(ellipse at top, #0a1024, var(--bg-0));
+      color: var(--text);
+      font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 14px; line-height: 1.55;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none;
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+      opacity: 0.35;
+    }
+    body::after {
+      content: ""; position: fixed; inset: 0; pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 200, 255, 0.018) 0px,
+        rgba(0, 200, 255, 0.018) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 1;
+    }
+
+    a { color: var(--cyan); text-decoration: none; }
+
+    header {
+      padding: 18px 28px; position: relative; z-index: 2;
+      border-bottom: 1px solid var(--panel-edge);
+      backdrop-filter: blur(12px);
+      display: flex; align-items: baseline; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px;
+    }
+    header h1 {
+      margin: 0; font-size: 1.3rem; letter-spacing: 0.16em; font-weight: 600;
+      background: linear-gradient(90deg, var(--cyan), var(--blue), var(--cyan));
+      background-size: 200% 100%; -webkit-background-clip: text;
+      background-clip: text; color: transparent;
+      animation: shimmer 6s linear infinite;
+    }
+    @keyframes shimmer { to { background-position: 200% 0; } }
+    header .meta { color: var(--dim); font-size: 0.8rem; letter-spacing: 0.05em; }
+    header .meta a { margin-left: 12px; }
+    .pulse {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green); margin-right: 8px; vertical-align: middle;
+      box-shadow: 0 0 10px var(--green);
+      animation: heartbeat 1.4s ease-in-out infinite;
+    }
+    @keyframes heartbeat {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    main {
+      max-width: 900px; margin: 0 auto; padding: 24px 28px 16px;
+      position: relative; z-index: 2;
+    }
+
+    .config {
+      background: var(--panel); border: 1px solid var(--panel-edge);
+      border-radius: 8px; padding: 14px 16px; margin-bottom: 16px;
+      backdrop-filter: blur(20px);
+    }
+    .config.collapsed .body { display: none; }
+    .config h2 {
+      margin: 0; font-size: 0.7rem; text-transform: uppercase;
+      letter-spacing: 0.2em; color: var(--cyan);
+      cursor: pointer; user-select: none;
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+    .config h2 .summary {
+      color: var(--dim); font-size: 0.7rem; text-transform: none;
+      letter-spacing: 0;
+    }
+    .config .body {
+      margin-top: 12px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    }
+    .config .body label {
+      display: block; font-size: 0.7rem; text-transform: uppercase;
+      letter-spacing: 0.12em; color: var(--dim); margin-bottom: 4px;
+    }
+    .config .body input {
+      width: 100%; padding: 8px 10px;
+      background: rgba(0, 50, 120, 0.18);
+      border: 1px solid var(--panel-edge); border-radius: 4px;
+      color: var(--text); font-family: inherit; font-size: 0.9rem;
+    }
+    .config .body input:focus {
+      outline: none; border-color: var(--cyan);
+      box-shadow: 0 0 8px rgba(0, 240, 255, 0.3);
+    }
+
+    #messages {
+      min-height: 320px; padding: 8px 0;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .empty {
+      color: var(--dim); font-style: italic; text-align: center;
+      padding: 40px 16px;
+    }
+
+    .msg { display: flex; gap: 12px; animation: slidein 240ms ease-out; }
+    @keyframes slidein {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .msg .role {
+      flex-shrink: 0; width: 60px;
+      font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.18em;
+      padding-top: 4px;
+    }
+    .msg.user .role { color: var(--user); text-shadow: 0 0 8px var(--user); }
+    .msg.ai .role { color: var(--ai); text-shadow: 0 0 8px var(--ai); }
+    .msg.tool .role { color: var(--tool); text-shadow: 0 0 8px var(--tool); }
+    .msg.err .role { color: var(--err); text-shadow: 0 0 8px var(--err); }
+    .msg .body {
+      flex: 1; padding: 8px 14px;
+      border-radius: 6px; white-space: pre-wrap; word-wrap: break-word;
+      background: rgba(10, 18, 40, 0.5);
+      border-left: 2px solid var(--panel-edge);
+    }
+    .msg.user .body { border-left-color: var(--user); }
+    .msg.ai .body { border-left-color: var(--ai); }
+    .msg.tool .body {
+      border-left-color: var(--tool); font-size: 0.82rem;
+      color: var(--dim);
+    }
+    .msg.tool .body strong { color: var(--tool); }
+    .msg.err .body { border-left-color: var(--err); color: var(--err); }
+
+    .composer {
+      position: sticky; bottom: 0; z-index: 3;
+      padding: 14px 0; margin-top: 16px;
+      backdrop-filter: blur(20px);
+      background: linear-gradient(0deg, var(--bg-0), transparent);
+    }
+    .composer-inner {
+      display: flex; gap: 10px;
+      background: var(--panel); border: 1px solid var(--panel-edge);
+      border-radius: 8px; padding: 12px;
+    }
+    .composer textarea {
+      flex: 1; min-height: 44px; max-height: 200px; resize: none;
+      padding: 10px 12px;
+      background: rgba(0, 50, 120, 0.15);
+      border: 1px solid var(--panel-edge); border-radius: 6px;
+      color: var(--text); font-family: inherit; font-size: 0.92rem;
+      line-height: 1.5;
+    }
+    .composer textarea:focus {
+      outline: none; border-color: var(--cyan);
+      box-shadow: 0 0 8px rgba(0, 240, 255, 0.3);
+    }
+    .composer button {
+      padding: 0 22px; font-family: inherit; font-size: 0.85rem;
+      letter-spacing: 0.18em; text-transform: uppercase; cursor: pointer;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      color: #02050d; font-weight: 700; border: 0; border-radius: 6px;
+      box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+    }
+    .composer button:disabled {
+      opacity: 0.4; cursor: not-allowed; box-shadow: none;
+    }
+    .composer .hint {
+      color: var(--dim); font-size: 0.7rem; margin-top: 6px;
+    }
+
+    code {
+      background: rgba(0, 180, 255, 0.08); padding: 2px 6px;
+      border-radius: 3px; color: var(--cyan); font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1><span class="pulse"></span>ZHUB · CHAT</h1>
+    </div>
+    <div class="meta">
+      <a href="/">dashboard</a>
+      <a href="/entity">entity</a>
+      <a href="/healthz">healthz</a>
+    </div>
+  </header>
+
+  <main>
+    <div id="config" class="config">
+      <h2>
+        <span>connection <span class="summary" id="config-summary">configure</span></span>
+        <span style="color: var(--dim); font-size: 0.7rem">click to expand</span>
+      </h2>
+      <div class="body">
+        <div>
+          <label for="base-url">Base URL</label>
+          <input id="base-url" type="text" placeholder="https://hub.example.com/my-ai/v1"/>
+        </div>
+        <div>
+          <label for="api-key">API Key</label>
+          <input id="api-key" type="password" placeholder="zk_..."/>
+        </div>
+      </div>
+    </div>
+
+    <div id="messages">
+      <div class="empty">
+        Configure your zhub endpoint above and start a conversation.<br/>
+        <small style="color: var(--dim)">Settings persist locally — no values sent except to your hub.</small>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-inner">
+        <textarea id="input" placeholder="Type a message — Enter to send, Shift+Enter for newline" rows="1"></textarea>
+        <button id="send">Send</button>
+      </div>
+      <div class="hint">
+        <span id="status">disconnected</span> · streaming SSE · saves to localStorage only
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const STATE = {
+      messages: [],     // {role, content}
+      streaming: false,
+    };
+
+    // Pre-fill base URL with current origin so single-AI hubs work without typing
+    function defaultBaseUrl() {
+      // If there's exactly one publisher, suggest <origin>/<name>/v1
+      // Otherwise leave empty so user pastes their own
+      return localStorage.getItem("zhub_chat_base_url") || "";
+    }
+    function defaultApiKey() {
+      return localStorage.getItem("zhub_chat_api_key") || "";
+    }
+    function saveConfig() {
+      localStorage.setItem("zhub_chat_base_url", $("base-url").value.trim());
+      localStorage.setItem("zhub_chat_api_key", $("api-key").value.trim());
+      updateSummary();
+    }
+    function updateSummary() {
+      const u = $("base-url").value.trim();
+      const k = $("api-key").value.trim();
+      const cfg = $("config-summary");
+      if (u && k) {
+        const short = u.replace(/^https?:\/\//, "").slice(0, 48);
+        cfg.textContent = `${short} · ${k.slice(0, 10)}…`;
+        $("status").textContent = "ready";
+        $("status").style.color = "var(--green)";
+      } else {
+        cfg.textContent = "configure";
+        $("status").textContent = "configure connection above";
+        $("status").style.color = "var(--dim)";
+      }
+    }
+
+    // Auto-detect: if same-origin and there's exactly one publisher, prefill
+    async function autoDetect() {
+      if ($("base-url").value) return;
+      try {
+        const r = await fetch("/api/dashboard");
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.publishers && d.publishers.length === 1) {
+          const name = d.publishers[0].name;
+          $("base-url").value = `${location.origin}/${name}/v1`;
+          updateSummary();
+        }
+      } catch {}
+    }
+
+    function escape(s) {
+      return String(s).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+    }
+
+    function render() {
+      const el = $("messages");
+      if (STATE.messages.length === 0) {
+        el.innerHTML = `<div class="empty">
+          Configure your zhub endpoint above and start a conversation.<br/>
+          <small style="color: var(--dim)">Settings persist locally — no values sent except to your hub.</small>
+        </div>`;
+        return;
+      }
+      el.innerHTML = STATE.messages.map(m => {
+        const cls = m.role === "user" ? "user"
+                  : m.role === "tool" ? "tool"
+                  : m.role === "error" ? "err"
+                  : "ai";
+        const label = m.role === "user" ? "you"
+                    : m.role === "tool" ? "tool"
+                    : m.role === "error" ? "error"
+                    : "ai";
+        return `<div class="msg ${cls}">
+          <div class="role">${label}</div>
+          <div class="body">${escape(m.content || (m.streaming ? "…" : ""))}</div>
+        </div>`;
+      }).join("");
+      // Scroll to bottom on new content
+      window.scrollTo(0, document.body.scrollHeight);
+    }
+
+    async function send() {
+      if (STATE.streaming) return;
+      const input = $("input");
+      const text = input.value.trim();
+      if (!text) return;
+      const baseUrl = $("base-url").value.trim();
+      const apiKey = $("api-key").value.trim();
+      if (!baseUrl || !apiKey) {
+        STATE.messages.push({role: "error",
+          content: "Set Base URL and API Key in the connection panel above."});
+        render();
+        return;
+      }
+
+      saveConfig();
+      STATE.messages.push({role: "user", content: text});
+      input.value = "";
+      input.style.height = "auto";
+
+      // Build the OpenAI-shape messages array — system + history + new user
+      const apiMsgs = STATE.messages
+        .filter(m => m.role === "user" || m.role === "ai" || m.role === "tool")
+        .map(m => ({
+          role: m.role === "ai" ? "assistant" : m.role,
+          content: m.content,
+        }));
+
+      const aiSlot = {role: "ai", content: "", streaming: true};
+      STATE.messages.push(aiSlot);
+      STATE.streaming = true;
+      $("send").disabled = true;
+      $("status").textContent = "streaming…";
+      $("status").style.color = "var(--cyan)";
+      render();
+
+      try {
+        const resp = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+          },
+          body: JSON.stringify({
+            model: "default",
+            messages: apiMsgs,
+            stream: true,
+          }),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text();
+          aiSlot.role = "error";
+          aiSlot.content = `HTTP ${resp.status}: ${errText.slice(0, 400)}`;
+          aiSlot.streaming = false;
+          render();
+          return;
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buf = "";
+        while (true) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, {stream: true});
+          // Parse SSE events
+          const lines = buf.split("\n");
+          buf = lines.pop();   // keep incomplete last line in buffer
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const payload = trimmed.slice(5).trim();
+            if (payload === "[DONE]") continue;
+            try {
+              const d = JSON.parse(payload);
+              const choice = d.choices && d.choices[0];
+              if (!choice) continue;
+              const delta = choice.delta || {};
+              if (delta.content) {
+                aiSlot.content += delta.content;
+                render();
+              }
+              if (delta.tool_calls) {
+                // surface tool_call deltas as a separate message bubble
+                for (const tcd of delta.tool_calls) {
+                  const fn = (tcd.function || {});
+                  const last = STATE.messages[STATE.messages.length - 1];
+                  if (last && last.role === "tool" && last.streaming) {
+                    last.content += (fn.arguments || "");
+                  } else {
+                    STATE.messages.splice(STATE.messages.length - 1, 0, {
+                      role: "tool", streaming: true,
+                      content: `↪ tool call: ${fn.name || "?"}(${fn.arguments || ""})`,
+                    });
+                  }
+                  render();
+                }
+              }
+            } catch (err) {
+              console.warn("bad SSE chunk:", payload);
+            }
+          }
+        }
+      } catch (err) {
+        aiSlot.role = "error";
+        aiSlot.content = String(err);
+      } finally {
+        aiSlot.streaming = false;
+        // mark any tool bubbles done
+        for (const m of STATE.messages) {
+          if (m.role === "tool" && m.streaming) m.streaming = false;
+        }
+        STATE.streaming = false;
+        $("send").disabled = false;
+        $("status").textContent = "ready";
+        $("status").style.color = "var(--green)";
+        render();
+      }
+    }
+
+    // Wire up
+    $("base-url").value = defaultBaseUrl();
+    $("api-key").value = defaultApiKey();
+    updateSummary();
+    autoDetect();
+
+    $("config").querySelector("h2").addEventListener("click", () => {
+      $("config").classList.toggle("collapsed");
+    });
+    if ($("base-url").value && $("api-key").value) {
+      $("config").classList.add("collapsed");
+    }
+
+    $("base-url").addEventListener("change", saveConfig);
+    $("api-key").addEventListener("change", saveConfig);
+
+    const ta = $("input");
+    ta.addEventListener("input", () => {
+      ta.style.height = "auto";
+      ta.style.height = Math.min(200, ta.scrollHeight) + "px";
+    });
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+    $("send").addEventListener("click", send);
+  </script>
+</body>
+</html>

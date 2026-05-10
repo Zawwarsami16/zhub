@@ -143,6 +143,7 @@ Same URL + `zk_` key works in:
 
 | Surface | How |
 |---|---|
+| **Built-in chat at `<hub>/chat`** | No install needed. Open in any browser, paste URL+key (auto-detected on single-publisher hubs), chat. SSE streaming, localStorage-persisted config. |
 | [**Pocket**](https://github.com/Zawwarsami16/pocket) | First-class zhub provider — auto-detects `zk_` keys |
 | **TypingMind / OpenWebUI / LibreChat / Chatbox / Msty / Jan.ai / BoltAI / AnythingLLM** | "Custom OpenAI provider" — paste base URL + key |
 | **Cursor / Continue.dev** | Custom OpenAI base URL setting |

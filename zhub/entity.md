@@ -122,6 +122,15 @@ returns the JSON snapshot it polls — same data shape as `/metrics` plus
 publisher/exposure details and a 50-entry recent-requests ring buffer.
 No auth on either; public visibility into hub health.
 
+### `GET /chat` (Phase 19.0)
+Built-in browser chat client. Self-contained single-file HTML (~16 KB);
+auto-detects the local hub's only-publisher when exactly one is
+registered, otherwise prompts the operator to paste URL+key. Settings
+persist in localStorage. SSE streaming. Pure browser; no backend
+coupling beyond the standard chat completions endpoint. Anyone can
+hit `/chat` and have a conversation without installing Pocket, curl,
+openai-py, or anything else.
+
 ### `GET /v1/models`
 OpenAI-style model list — every registered publisher as one model. Use
 when adding zhub as a custom OpenAI provider in BYOK clients (Pocket,
