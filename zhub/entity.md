@@ -193,6 +193,22 @@ Publisher long-lived WebSocket. Send `register-publisher` first.
 Client long-lived WebSocket. Send `register-connection` first. If the
 AI lives on a peer hub, this hub transparently tunnels.
 
+### `GET /hub/identity` (Phase 17.0)
+Returns this hub's long-lived identity: `{hub_id, version, signed,
+public_key}`. `signed: false` means the `[crypto]` extras aren't
+installed and this hub can't sign cross-hub requests or verify incoming
+ones (still functional, just unverified). Other hubs fetch this once
+and cache the public_key to verify signed peer routing.
+
+When forwarding to a peer, the hub adds:
+- `X-Zhub-Hub-Id: <our-id>`
+- `X-Zhub-Hub-Signature: <ed25519-sig of forwarded-by-chain>`
+
+Receiving hub fetches the originator's `/hub/identity`, caches, verifies.
+Backwards compatible: missing signature = unverified (processed). Bad
+signature with `ZHUB_REQUIRE_VERIFIED_PEERS=1` env set = `401
+peer_unverified`. Bad without strict env = log warning, accept.
+
 ### `WS /ws/expose` (Phase 7.0)
 Device-only WebSocket — no AI pairing required. Send `register-exposure`
 first; hub returns `{exposure_id, device_key}` (`ex_...` and `dx_...`).

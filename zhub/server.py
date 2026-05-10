@@ -42,6 +42,7 @@ except ImportError as e:
 from .persistence import Storage, hash_key
 from .ratelimit import parse_rate, SlidingWindow
 from .validate import validate as validate_schema
+from .hub_identity import HubIdentity, verify_signature as _verify_hub_sig
 from .protocol import (
     Envelope, registered, chat_request, chat_response,
     invoke_request, invoke_result, connection_event, error_envelope, new_request_id,
@@ -130,6 +131,12 @@ class Hub:
         # for nearest-rank percentile computation in /metrics. Bounded so
         # /metrics stays cheap even at high request volume.
         self._latency_rings: dict[str, _deque] = {}
+        # Phase 17.0: long-lived hub identity (ed25519). Used to sign
+        # cross-hub proxy headers and to verify incoming signed requests
+        # from peers. Lazily generated; persisted via storage.
+        self.identity = HubIdentity(storage=storage)
+        # cache of peer hub_url → public_key_hex from /hub/identity probes
+        self._peer_pubkey_cache: dict[str, str] = {}
 
     def bump(self, ai_name: str, key: str, delta: int = 1) -> None:
         self.metrics[ai_name][key] += delta
@@ -566,6 +573,19 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "publishers": str(len(hub.publishers))}
 
+    @app.get("/hub/identity")
+    async def hub_identity_endpoint() -> JSONResponse:
+        """Phase 17.0: a hub's long-lived identity. Other hubs fetch this
+        once and cache to verify signed cross-hub requests. Public —
+        revealing the public key is the whole point. `signed: false`
+        means crypto isn't installed and this hub can't sign or verify."""
+        return JSONResponse({
+            "hub_id": hub.hub_id,
+            "version": "1",
+            "signed": hub.identity.available,
+            "public_key": hub.identity.public_key_hex(),
+        })
+
     # --- entity (zhub's self-knowledge layer) -----------------------------
     # Single markdown file shipped with the hub. Any AI attached can fetch
     # it and become instantly fluent in zhub — routes, errors, patterns,
@@ -725,6 +745,73 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             "ai": ai_name,
         })
         return response
+
+    @app.middleware("http")
+    async def _verify_peer_signature(request, call_next):
+        """Phase 17.0: opportunistically verify cross-hub signed chain.
+
+        If the request carries X-Zhub-Hub-Id + X-Zhub-Hub-Signature, fetch
+        the originating hub's /hub/identity (cached), verify the signature
+        against the X-Zhub-Forwarded-By chain. Result is stamped into
+        request.state.peer_verified for downstream handlers + the access
+        log line. Backwards compatible: missing signature → unverified
+        (still processed). Signature present + bad → if env
+        ZHUB_REQUIRE_VERIFIED_PEERS=1 then 401, else processed with a log
+        warning."""
+        request.state.peer_verified = None  # None = no signature claim
+        peer_id = request.headers.get("x-zhub-hub-id")
+        peer_sig = request.headers.get("x-zhub-hub-signature")
+        if peer_id and peer_sig:
+            chain = request.headers.get("x-zhub-forwarded-by", "")
+            ok = await _verify_peer(peer_id, chain, peer_sig)
+            request.state.peer_verified = ok
+            if (not ok) and os.environ.get("ZHUB_REQUIRE_VERIFIED_PEERS") == "1":
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": {"code": "peer_unverified",
+                                       "message": f"signature from hub {peer_id!r} did not verify"}},
+                )
+            if not ok:
+                log.warning("peer signature did not verify (hub_id=%s) — accepting "
+                            "in non-strict mode; set ZHUB_REQUIRE_VERIFIED_PEERS=1 "
+                            "to reject", peer_id)
+        return await call_next(request)
+
+    async def _verify_peer(peer_hub_id: str, chain: str, sig_hex: str) -> bool:
+        """Look up the peer hub's public key (best-effort, cached) and
+        verify the signature. Walks ZHUB_PEERS to find a hub whose
+        /hub/identity returns peer_hub_id."""
+        peers_env = os.environ.get("ZHUB_PEERS", "")
+        peers = [p.strip() for p in peers_env.split(",") if p.strip()]
+        if not peers:
+            return False
+        try:
+            import httpx
+        except ImportError:
+            return False
+        for peer in peers:
+            cached = hub._peer_pubkey_cache.get(peer + "::" + peer_hub_id)
+            if cached:
+                if _verify_hub_sig(cached, chain.encode("utf-8"), sig_hex):
+                    return True
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as c:
+                    resp = await c.get(peer.rstrip("/") + "/hub/identity")
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.json()
+                    if data.get("hub_id") != peer_hub_id:
+                        continue
+                    pk = data.get("public_key")
+                    if not pk:
+                        continue
+                    hub._peer_pubkey_cache[peer + "::" + peer_hub_id] = pk
+                    if _verify_hub_sig(pk, chain.encode("utf-8"), sig_hex):
+                        return True
+            except Exception as e:
+                log.warning("could not fetch identity from peer %s: %s", peer, e)
+        return False
 
     @app.middleware("http")
     async def _add_entity_hint_header(request, call_next):
@@ -975,11 +1062,20 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             raise HTTPException(500, "peer routing requires httpx")
 
         target = peer_url.rstrip("/") + f"/{ai_name}/v1/chat/completions"
+        chain_str = ",".join(forwarded_by_chain)
         headers = {
             "Authorization": f"Bearer {api_key}" if api_key else "",
-            "X-Zhub-Forwarded-By": ",".join(forwarded_by_chain),
+            "X-Zhub-Forwarded-By": chain_str,
             "Content-Type": "application/json",
         }
+        # Phase 17.0: sign the chain so the receiving hub can verify the
+        # request really originated where it claims. Best-effort —
+        # silently skipped if crypto isn't installed (recipient sees no
+        # signature header and treats request as unverified).
+        sig = hub.identity.sign(chain_str.encode("utf-8"))
+        if sig:
+            headers["X-Zhub-Hub-Id"] = hub.hub_id
+            headers["X-Zhub-Hub-Signature"] = sig
         is_stream = bool(body.get("stream"))
         if is_stream:
             client = httpx.AsyncClient(timeout=60.0)

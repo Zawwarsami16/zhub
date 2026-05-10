@@ -67,6 +67,10 @@ class Storage:
         last_seen       INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_exposures_key ON exposures(device_key_hash);
+    CREATE TABLE IF NOT EXISTS kv (
+        k TEXT PRIMARY KEY,
+        v TEXT NOT NULL
+    );
     """
 
     def __init__(self, path: str | Path = "zhub.db") -> None:
@@ -270,6 +274,25 @@ class Storage:
         with self._lock:
             self._conn.execute(
                 "DELETE FROM exposures WHERE exposure_id = ?", (exposure_id,)
+            )
+            self._conn.commit()
+
+    # ---- generic key-value (Phase 17.0) ---------------------------------
+
+    def kv_get(self, key: str) -> Optional[str]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT v FROM kv WHERE k = ?", (key,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+
+    def kv_set(self, key: str, value: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO kv (k, v) VALUES (?, ?) "
+                "ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+                (key, value),
             )
             self._conn.commit()
 
