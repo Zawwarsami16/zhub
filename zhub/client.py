@@ -119,6 +119,8 @@ def publish(
     api_key: Optional[str] = None,
     private_key: Optional[str] = None,
     rate_limit: str = "60/min",
+    resources: Optional[list[dict[str, Any]]] = None,
+    prompts: Optional[list[dict[str, Any]]] = None,
 ) -> ZhubPublication:
     """Create a ZhubPublication. Call .run_forever() to actually start serving.
 
@@ -136,6 +138,7 @@ def publish(
         name=name, description=description,
         operator=operator, contact=contact, public=public,
         rate_limit=rate_limit,
+        resources=resources, prompts=prompts,
     )
     if capabilities:
         manifest.capabilities.extend(capabilities)

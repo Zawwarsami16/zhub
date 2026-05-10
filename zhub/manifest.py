@@ -56,6 +56,12 @@ class Manifest:
     public: bool = False                       # listed in public registry?
     operator: str = ""                         # who runs this AI
     contact: str = ""                          # how to reach the operator
+    # Phase 9.0 — MCP resources + prompts surface, declared inline.
+    # Each resource: {uri, name, description?, mimeType?, content}
+    # Each prompt:   {name, description?, arguments?: [{name, required?, description?}],
+    #                 messages: [{role, content (str)}] with {var} placeholders}
+    resources: list[dict[str, Any]] = field(default_factory=list)
+    prompts: list[dict[str, Any]] = field(default_factory=list)
     extensions: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -88,6 +94,8 @@ def chat_only_manifest(
     contact: str = "",
     public: bool = False,
     rate_limit: str = "60/min",
+    resources: Optional[list[dict[str, Any]]] = None,
+    prompts: Optional[list[dict[str, Any]]] = None,
 ) -> Manifest:
     """The simplest possible manifest — an AI that only does chat."""
     return Manifest(
@@ -95,6 +103,8 @@ def chat_only_manifest(
         description=description,
         accepts="openai-v1-chat-completions",
         rate_limit=rate_limit,
+        resources=resources or [],
+        prompts=prompts or [],
         capabilities=[
             Capability(
                 name="chat",

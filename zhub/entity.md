@@ -113,8 +113,10 @@ Per-AI model list. Single entry. Use when base URL is `<hub>/<ai>/v1`.
 
 ### `GET /<ai>/manifest.json`
 Publisher's full manifest: name, description, capabilities, signed
-status, public_key, connected clients with their capabilities. Use this
-to discover what an AI is and what tools its connections expose.
+status, public_key, connected clients with their capabilities, plus
+optional `resources` and `prompts` arrays declared at publish time
+(Phase 9.0). The MCP server bridge (`zhub.mcp_server`) reads this on
+each `*/list` to surface the AI's resources + prompts to MCP hosts.
 
 ### `GET /registry`
 Public listing of currently-registered publishers (only ones marked

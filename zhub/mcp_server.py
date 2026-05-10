@@ -57,6 +57,14 @@ def _err(req_id: Any, code: int, message: str, data: Optional[Any] = None) -> st
     return json.dumps({"jsonrpc": "2.0", "id": req_id, "error": err})
 
 
+def _substitute(text: str, args: dict[str, Any]) -> str:
+    """Simple {var} placeholder substitution used by prompts/get."""
+    out = text
+    for k, v in (args or {}).items():
+        out = out.replace("{" + str(k) + "}", str(v))
+    return out
+
+
 class ZhubMCPServer:
     def __init__(self, hub: str, ai: str, key: str, timeout: float = 60.0) -> None:
         self.hub = hub.rstrip("/")
@@ -75,17 +83,24 @@ class ZhubMCPServer:
         if self._http:
             await self._http.aclose()
 
-    async def _discover_capabilities(self) -> list[dict[str, Any]]:
-        """Fetch the AI's manifest and turn connected client capabilities
-        into MCP tool entries. Returns [] if the AI is offline or no
-        connections are present — `chat` is always exposed independently."""
+    async def _fetch_manifest(self) -> Optional[dict[str, Any]]:
+        """Fetch the AI's manifest from the hub. Returns None on any
+        error so callers can fall back gracefully."""
         assert self._http is not None
         try:
             resp = await self._http.get(f"{self.hub}/{self.ai}/manifest.json")
             if resp.status_code != 200:
-                return []
-            manifest = resp.json()
+                return None
+            return resp.json()
         except Exception:
+            return None
+
+    async def _discover_capabilities(self) -> list[dict[str, Any]]:
+        """Fetch the AI's manifest and turn connected client capabilities
+        into MCP tool entries. Returns [] if the AI is offline or no
+        connections are present — `chat` is always exposed independently."""
+        manifest = await self._fetch_manifest()
+        if manifest is None:
             return []
         tools: list[dict[str, Any]] = []
         self._cap_index.clear()
@@ -102,6 +117,92 @@ class ZhubMCPServer:
                     "inputSchema": cap.get("schema") or {"type": "object"},
                 })
         return tools
+
+    # --- Phase 9.0: resources + prompts (manifest-declared, static) ----
+
+    async def _list_resources(self) -> list[dict[str, Any]]:
+        manifest = await self._fetch_manifest()
+        if manifest is None:
+            return []
+        out: list[dict[str, Any]] = []
+        for r in manifest.get("resources") or []:
+            uri = r.get("uri")
+            if not uri:
+                continue
+            entry = {"uri": uri, "name": r.get("name") or uri}
+            if r.get("description"):
+                entry["description"] = r["description"]
+            if r.get("mimeType"):
+                entry["mimeType"] = r["mimeType"]
+            out.append(entry)
+        return out
+
+    async def _read_resource(self, uri: str) -> Optional[dict[str, Any]]:
+        manifest = await self._fetch_manifest()
+        if manifest is None:
+            return None
+        for r in manifest.get("resources") or []:
+            if r.get("uri") == uri:
+                content = r.get("content") or ""
+                contents_entry: dict[str, Any] = {"uri": uri, "text": content}
+                if r.get("mimeType"):
+                    contents_entry["mimeType"] = r["mimeType"]
+                return {"contents": [contents_entry]}
+        return None
+
+    async def _list_prompts(self) -> list[dict[str, Any]]:
+        manifest = await self._fetch_manifest()
+        if manifest is None:
+            return []
+        out: list[dict[str, Any]] = []
+        for p in manifest.get("prompts") or []:
+            name = p.get("name")
+            if not name:
+                continue
+            entry = {"name": name}
+            if p.get("description"):
+                entry["description"] = p["description"]
+            if p.get("arguments"):
+                entry["arguments"] = p["arguments"]
+            out.append(entry)
+        return out
+
+    async def _get_prompt(
+        self, name: str, arguments: dict[str, Any],
+    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        """Returns (result_dict, error_message). Either is None when the
+        other is set."""
+        manifest = await self._fetch_manifest()
+        if manifest is None:
+            return None, "could not fetch manifest"
+        prompt = next(
+            (p for p in (manifest.get("prompts") or [])
+             if p.get("name") == name),
+            None,
+        )
+        if prompt is None:
+            return None, f"unknown prompt: {name}"
+        # Required-arg check
+        for arg in prompt.get("arguments") or []:
+            if arg.get("required") and arg["name"] not in arguments:
+                return None, f"missing required argument: {arg['name']}"
+        # Substitute {var} in messages
+        rendered: list[dict[str, Any]] = []
+        for msg in prompt.get("messages") or []:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                rendered_text = _substitute(content, arguments)
+                rendered.append({
+                    "role": role,
+                    "content": {"type": "text", "text": rendered_text},
+                })
+            else:
+                rendered.append({"role": role, "content": content})
+        result = {"messages": rendered}
+        if prompt.get("description"):
+            result["description"] = prompt["description"]
+        return result, None
 
     async def tools(self) -> list[dict[str, Any]]:
         chat_tool = {
@@ -170,12 +271,45 @@ class ZhubMCPServer:
             self._initialized = True
             return _ok(req_id, {
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {}},
+                "capabilities": {
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {},
+                },
                 "serverInfo": SERVER_INFO,
             })
 
         if method == "notifications/initialized":
             return None  # client tells us it's done; no response
+
+        if method == "resources/list":
+            return _ok(req_id, {"resources": await self._list_resources()})
+
+        if method == "resources/read":
+            uri = params.get("uri", "")
+            if not uri:
+                return _err(req_id, JSONRPC_INVALID_PARAMS, "missing uri")
+            result = await self._read_resource(uri)
+            if result is None:
+                return _err(req_id, JSONRPC_METHOD_NOT_FOUND,
+                            f"unknown resource: {uri}")
+            return _ok(req_id, result)
+
+        if method == "prompts/list":
+            return _ok(req_id, {"prompts": await self._list_prompts()})
+
+        if method == "prompts/get":
+            name = params.get("name", "")
+            arguments = params.get("arguments") or {}
+            if not name:
+                return _err(req_id, JSONRPC_INVALID_PARAMS, "missing name")
+            result, err = await self._get_prompt(name, arguments)
+            if err:
+                code = (JSONRPC_METHOD_NOT_FOUND
+                        if err.startswith("unknown prompt")
+                        else JSONRPC_INVALID_PARAMS)
+                return _err(req_id, code, err)
+            return _ok(req_id, result)
 
         if method == "tools/list":
             return _ok(req_id, {"tools": await self.tools()})

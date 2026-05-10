@@ -353,7 +353,7 @@ CI runs the Python suite on 3.10 / 3.11 / 3.12 plus the JS module test on every 
 | **~~4.2b~~** ✅ | True chunked tool_call delta streaming through SSE (default mode passes deltas through; `auto` mode also resolves+continues) |
 | **7.1** | Per-exposure access policies (whitelist of AI names / publisher keys) |
 | **More brains** | Cohere, Mistral, Together, Bedrock, Vertex, vLLM-direct |
-| **MCP resources + prompts** | Surface zhub-served files & prompts to MCP hosts, beyond just tools |
+| ~~**MCP resources + prompts**~~ ✅ | Phase 9.0: publishers declare `resources=` and `prompts=` in `publish()`; the MCP bridge surfaces them as resources/list, resources/read, prompts/list, prompts/get |
 | ~~**Hub UI dashboard**~~ ✅ | Live view of connected publishers, recent requests, latency, exposed devices — at `/` (Phase 8.0) |
 | **Multi-tier API keys** | Read / full / admin tiers per AI |
 | **Federation v2** | Signed peer relationships, shared identity registry across federated hubs |
