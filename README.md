@@ -325,6 +325,28 @@ All three speak the same JSON-over-WebSocket envelope. They interoperate against
 
 ## Production deployment
 
+Two paths — pick whichever matches your ops style.
+
+### Docker Compose
+
+```bash
+echo "GROQ_API_KEY=gsk_..." > .env
+docker compose up -d                    # hub on :8080, persistent /data volume
+docker compose --profile tunnel up -d   # add a cloudflared named-tunnel sidecar
+```
+
+Or pull the prebuilt image directly:
+
+```bash
+docker run -p 8080:8080 -v zhub-data:/data \
+  -e GROQ_API_KEY=gsk_... \
+  ghcr.io/zawwarsami16/zhub:latest
+```
+
+Multi-arch (amd64 + arm64). Healthcheck on `/healthz`. Persistent SQLite at `/data/zhub.db` so `zk_` keys survive restarts.
+
+### Bare VPS + systemd
+
 [`docs/DEPLOY.md`](docs/DEPLOY.md) walks a $5 VPS deployment in 10 minutes:
 
 - Ubuntu user setup

@@ -1,0 +1,55 @@
+# zhub — docker-compose for one-command production-ish bring-up.
+#
+#   docker compose up                    # hub only, local
+#   docker compose --profile tunnel up   # hub + named cloudflared tunnel
+#
+# Brain credentials come from env or .env (gitignored). Pick whichever you
+# have a key for — the multi-brain publisher inside the hub container
+# auto-detects the first available.
+#
+# Persistent zk_ keys + entity extensions survive restarts via the
+# `zhub-data` named volume mounted at /data.
+
+services:
+  hub:
+    build: .
+    image: zhub:latest
+    container_name: zhub-hub
+    restart: unless-stopped
+    ports:
+      - "${ZHUB_PORT:-8080}:8080"
+    volumes:
+      - zhub-data:/data
+    environment:
+      # one of these enables the matching brain at startup
+      OLLAMA_HOST: "${OLLAMA_HOST:-}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      CEREBRAS_API_KEY: "${CEREBRAS_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      TOGETHER_API_KEY: "${TOGETHER_API_KEY:-}"
+      MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
+      COHERE_API_KEY: "${COHERE_API_KEY:-}"
+      ZHUB_PEERS: "${ZHUB_PEERS:-}"
+      ZHUB_HUB_ID: "${ZHUB_HUB_ID:-}"
+
+  # Optional: a cloudflared named-tunnel sidecar.
+  # Setup once on the host:
+  #   cloudflared tunnel login
+  #   cloudflared tunnel create zhub-prod
+  #   cloudflared tunnel route dns zhub-prod hub.example.com
+  # Then `docker compose --profile tunnel up`.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: zhub-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run ${TUNNEL_NAME:-zhub-prod}
+    volumes:
+      - ${HOME}/.cloudflared:/etc/cloudflared:ro
+    depends_on:
+      - hub
+    profiles:
+      - tunnel
+
+volumes:
+  zhub-data:
