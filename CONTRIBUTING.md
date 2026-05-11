@@ -1,6 +1,6 @@
 # Contributing to zhub
 
-Thanks for considering a contribution. zhub is intentionally small: each file does one thing, the test bar is high, and the public surface stays neutral. Keeping it that way is the contribution.
+zhub is intentionally small: each file does one thing, the test bar is high, the public surface stays neutral. Keeping it that way is the contribution.
 
 ## Setup
 

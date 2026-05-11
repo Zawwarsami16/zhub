@@ -1,6 +1,6 @@
 # zhub in 10 minutes — hands-on
 
-Goal: by the end of this, you have an OpenAI-compatible AI endpoint reachable from your phone. We'll go from `git clone` to "Pocket talks to your AI" in a single sitting.
+Goal: by the end, you have an OpenAI-compatible AI endpoint reachable from your phone. From `git clone` to "Pocket talks to your AI", in one sitting.
 
 ## Minute 0–2: install
 
