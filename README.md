@@ -1,5 +1,9 @@
 <div align="center">
 
+<a href="https://github.com/Zawwarsami16">
+  <img src="https://raw.githubusercontent.com/Zawwarsami16/Zawwarsami16/main/assets/studio-mark.svg" alt="part of the Anteroom Studio surface · github.com/Zawwarsami16" width="900" height="56" style="max-width:100%"/>
+</a>
+
 # zhub
 
 **WiFi for AIs.** Drop-in substrate that turns any AI into a discoverable, controllable, OpenAI-compatible endpoint — reachable from any client, on any machine, in three commands.
