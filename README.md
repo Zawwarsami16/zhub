@@ -5,11 +5,11 @@
 **WiFi for AIs.** Drop-in substrate that turns any AI into a discoverable, controllable, OpenAI-compatible endpoint — reachable from any client, on any machine, in three commands.
 
 [![CI](https://github.com/Zawwarsami16/zhub/actions/workflows/ci.yml/badge.svg)](https://github.com/Zawwarsami16/zhub/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-178%20%2B%2013-brightgreen)](#tests)
-[![Brains](https://img.shields.io/badge/brains-8-cyan)](#performance)
-[![Version](https://img.shields.io/badge/version-0.3.0-orange)](CHANGELOG.md)
+[![License](https://img.shields.io/badge/License-MIT-ff003c?style=flat-square&labelColor=0a0a0a)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10+-ff003c?style=flat-square&logo=python&logoColor=ff003c&labelColor=0a0a0a)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-178%20%2B%2013-ff003c?style=flat-square&labelColor=0a0a0a)](#tests)
+[![Brains](https://img.shields.io/badge/brains-8-ff003c?style=flat-square&labelColor=0a0a0a)](#performance)
+[![Version](https://img.shields.io/badge/version-0.3.0-ff003c?style=flat-square&labelColor=0a0a0a)](CHANGELOG.md)
 
 </div>
 
