@@ -73,6 +73,20 @@ async def stream_openai_compat(
         "POST", f"{base_url.rstrip('/')}/chat/completions",
         json=body, headers=headers,
     ) as response:
+        # An upstream error (429 rate limit, 401 bad key, 5xx) comes back as a
+        # JSON body that isn't SSE, so the line loop below would skip every
+        # line and the generator would end yielding nothing — a silent empty
+        # completion. Catch it here and raise so the publisher surfaces a real
+        # error to the caller instead. getattr default keeps test doubles that
+        # don't set status_code working; real httpx responses always have it.
+        status = getattr(response, "status_code", 200)
+        if status >= 400:
+            try:
+                detail = (await response.aread()).decode("utf-8", "replace").strip()
+            except Exception:
+                detail = ""
+            snippet = f": {detail[:300]}" if detail else ""
+            raise RuntimeError(f"upstream returned HTTP {status}{snippet}")
         async for line in response.aiter_lines():
             line = line.rstrip("\r")
             if not line.startswith("data:"):

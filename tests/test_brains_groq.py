@@ -105,3 +105,48 @@ async def test_stream_ignores_lines_without_data_prefix():
     out = [c async for c in adapter.stream([{"role": "user", "content": "hi"}])]
     assert [c.delta for c in out if c.delta] == ["ok"]
     assert out[-1].done is True
+
+
+class _FakeErrorStream:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self._body = body.encode()
+
+    async def aiter_lines(self):
+        # an error response is not SSE; emit the raw json body as one line
+        yield self._body.decode()
+
+    async def aread(self):
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+
+class _FakeErrorClient:
+    def __init__(self, status_code, body):
+        self._status = status_code
+        self._body = body
+
+    def stream(self, method, url, **kw):
+        return _FakeErrorStream(self._status, self._body)
+
+    async def aclose(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_stream_raises_on_upstream_error():
+    """A 429/4xx/5xx body is not SSE — without a status check it would parse
+    to an empty stream. The adapter should raise so the publisher surfaces it."""
+    fake = _FakeErrorClient(429, '{"error":{"message":"rate limit exceeded"}}')
+    adapter = GroqAdapter(api_key="k", model="llama-3.3-70b-versatile", http=fake)
+    with pytest.raises(RuntimeError) as ei:
+        async for _ in adapter.stream([{"role": "user", "content": "hi"}]):
+            pass
+    msg = str(ei.value)
+    assert "429" in msg
+    assert "rate limit exceeded" in msg
