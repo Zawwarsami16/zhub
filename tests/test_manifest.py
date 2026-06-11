@@ -29,3 +29,20 @@ def test_chat_only_helper():
     assert m.name == "test-ai"
     assert m.public is False
     assert any(c.name == "chat" for c in m.capabilities)
+
+
+def test_from_dict_ignores_unknown_fields():
+    # A manifest published by a newer schema version carries fields a v0.1
+    # reader doesn't know. Parsing it must degrade gracefully, not raise.
+    m = Manifest.from_dict({
+        "schema_version": "0.2",
+        "name": "future-ai",
+        "description": "from a newer hub",
+        "tags": ["vision", "beta"],
+        "capabilities": [
+            {"name": "chat", "description": "chat", "cost_per_token": 0.001},
+        ],
+    })
+    assert m.name == "future-ai"
+    assert m.schema_version == "0.2"
+    assert m.capabilities[0].name == "chat"

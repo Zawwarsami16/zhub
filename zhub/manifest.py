@@ -7,7 +7,7 @@ endpoint and exposes a custom z-hub extension for capability discovery.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from typing import Any, Optional
 import json
 
@@ -75,9 +75,19 @@ class Manifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Manifest":
-        caps_raw = data.get("capabilities", [])
-        caps = [Capability(**c) if isinstance(c, dict) else c for c in caps_raw]
-        kwargs = {k: v for k, v in data.items() if k != "capabilities"}
+        # Drop keys we don't know about instead of crashing. schema_version
+        # exists precisely so a newer hub can add fields; a v0.1 reader parsing
+        # a v0.2 manifest (or any extra top-level key) must degrade gracefully,
+        # not raise TypeError. Same for unknown keys on a capability.
+        cap_fields = {f.name for f in fields(Capability)}
+        caps = [
+            Capability(**{k: v for k, v in c.items() if k in cap_fields})
+            if isinstance(c, dict) else c
+            for c in data.get("capabilities", [])
+        ]
+        manifest_fields = {f.name for f in fields(cls)} - {"capabilities"}
+        kwargs = {k: v for k, v in data.items()
+                  if k in manifest_fields and k != "capabilities"}
         return cls(capabilities=caps, **kwargs)
 
     @classmethod
