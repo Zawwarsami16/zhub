@@ -59,7 +59,7 @@ class AnthropicAdapter(BrainAdapter):
                 return None
         except Exception:
             return None
-        model = os.environ.get("ANTHROPIC_MODEL", _DEFAULT_MODEL)
+        model = os.environ.get("ANTHROPIC_MODEL") or _DEFAULT_MODEL
         return cls(api_key=key, model=model)
 
     async def stream(

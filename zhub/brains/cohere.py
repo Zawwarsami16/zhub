@@ -58,7 +58,7 @@ class CohereAdapter(BrainAdapter):
                 return None
         except Exception:
             return None
-        model = os.environ.get("COHERE_MODEL", _DEFAULT_MODEL)
+        model = os.environ.get("COHERE_MODEL") or _DEFAULT_MODEL
         return cls(api_key=key, model=model)
 
     async def stream(

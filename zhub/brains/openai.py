@@ -45,10 +45,10 @@ class OpenAIAdapter(BrainAdapter):
         key = os.environ.get("OPENAI_API_KEY")
         if not key:
             return None
-        base = os.environ.get("OPENAI_BASE_URL", _DEFAULT_BASE).rstrip("/")
+        base = (os.environ.get("OPENAI_BASE_URL") or _DEFAULT_BASE).rstrip("/")
         if not probe_openai_compat(base, key):
             return None
-        model = os.environ.get("OPENAI_MODEL", _DEFAULT_MODEL)
+        model = os.environ.get("OPENAI_MODEL") or _DEFAULT_MODEL
         return cls(api_key=key, model=model, base_url=base)
 
     async def stream(

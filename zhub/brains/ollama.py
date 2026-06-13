@@ -38,8 +38,8 @@ class OllamaAdapter(BrainAdapter):
 
     @classmethod
     def try_init(cls) -> Optional["OllamaAdapter"]:
-        host = os.environ.get("OLLAMA_HOST", _DEFAULT_HOST).rstrip("/")
-        model = os.environ.get("OLLAMA_MODEL", _DEFAULT_MODEL)
+        host = (os.environ.get("OLLAMA_HOST") or _DEFAULT_HOST).rstrip("/")
+        model = os.environ.get("OLLAMA_MODEL") or _DEFAULT_MODEL
         try:
             r = httpx.get(f"{host}/api/version", timeout=_PROBE_TIMEOUT)
             if r.status_code != 200:

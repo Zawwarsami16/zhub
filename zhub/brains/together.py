@@ -42,7 +42,7 @@ class TogetherAdapter(BrainAdapter):
         key = os.environ.get("TOGETHER_API_KEY")
         if not key or not probe_openai_compat(_BASE_URL, key):
             return None
-        model = os.environ.get("TOGETHER_MODEL", _DEFAULT_MODEL)
+        model = os.environ.get("TOGETHER_MODEL") or _DEFAULT_MODEL
         return cls(api_key=key, model=model)
 
     async def stream(
