@@ -2,6 +2,16 @@
 
 All notable changes to zhub. Versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Brain adapters: empty env vars now fall back to defaults.** A set-but-empty
+  `*_MODEL`, `OLLAMA_HOST`, or `OPENAI_BASE_URL` (common in `.env` files,
+  docker-compose `environment:` blocks, and blank CI secrets) used to override
+  the default with `""` — sending `{"model": ""}` upstream (400) or silently
+  breaking provider detection. All eight adapters now coerce an empty value
+  back to the default.
+
 ## [0.3.0] — 2026-05-10
 
 ### Added
