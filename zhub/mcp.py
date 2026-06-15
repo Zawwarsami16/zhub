@@ -114,12 +114,16 @@ class MCPClient:
                 await self.process.wait()
             except ProcessLookupError:
                 pass
-        for fut in list(self._pending.values()):
-            if not fut.done():
-                fut.set_exception(MCPError("MCP subprocess terminated"))
-        self._pending.clear()
+        self._fail_pending(MCPError("MCP subprocess terminated"))
 
     # ---- internals ----
+
+    def _fail_pending(self, exc: Exception) -> None:
+        """Resolve every in-flight request with `exc` so callers stop awaiting."""
+        for fut in list(self._pending.values()):
+            if not fut.done():
+                fut.set_exception(exc)
+        self._pending.clear()
 
     async def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if not self.process or not self.process.stdin:
@@ -154,6 +158,9 @@ class MCPClient:
             while True:
                 line = await self.process.stdout.readline()
                 if not line:
+                    # EOF: the server closed stdout (exited or crashed). Any
+                    # in-flight request will never get a response, so fail them
+                    # instead of leaving callers awaiting forever.
                     break
                 line = line.strip()
                 if not line:
@@ -182,7 +189,7 @@ class MCPClient:
             raise
         except Exception as e:
             log.warning("mcp reader loop crashed: %s", e)
-            for fut in list(self._pending.values()):
-                if not fut.done():
-                    fut.set_exception(MCPError(f"reader crashed: {e}"))
-            self._pending.clear()
+            self._fail_pending(MCPError(f"reader crashed: {e}"))
+            return
+        # Clean EOF (the `break` above): subprocess closed its output stream.
+        self._fail_pending(MCPError("MCP subprocess closed its output stream"))
