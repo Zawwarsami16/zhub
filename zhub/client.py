@@ -48,10 +48,17 @@ def _to_ws_url(http_or_ws_url: str, ws_path: str) -> str:
     Accepts already-ws URLs. Preserves port + path prefix."""
     u = urlparse(http_or_ws_url)
     scheme = {"https": "wss", "http": "ws", "wss": "wss", "ws": "ws"}.get(u.scheme, "wss")
-    netloc = u.netloc or u.path  # in case user passed bare host
+    netloc = u.netloc
+    prefix = u.path
+    if not netloc:
+        # No scheme given — urlparse puts the whole "host[/prefix]" in u.path.
+        host, _, rest = u.path.partition("/")
+        netloc = host
+        prefix = f"/{rest}" if rest else ""
     if not netloc:
         raise ValueError(f"could not parse hub url: {http_or_ws_url}")
-    return f"{scheme}://{netloc}{ws_path}"
+    prefix = prefix.rstrip("/")
+    return f"{scheme}://{netloc}{prefix}{ws_path}"
 
 
 # ---- publish mode --------------------------------------------------------
