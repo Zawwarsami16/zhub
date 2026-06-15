@@ -11,7 +11,6 @@ import importlib
 import os
 import shutil
 import sys
-from typing import Optional
 
 
 def _yes(label: str, ok: bool, note: str = "") -> None:
@@ -51,19 +50,20 @@ def run(argv: list[str]) -> None:
     _yes("cloudflared on PATH", bool(cf),
          cf or "optional; install for --public-tunnel / `up` tunneling")
 
-    # 5) brain credentials
+    # 5) brain credentials — derived from the adapter registry so the list
+    # can never drift out of sync as adapters are added (see env_keys).
     print("\n  brain availability:")
-    creds = {
-        "OLLAMA_HOST": os.environ.get("OLLAMA_HOST"),
-        "GROQ_API_KEY": os.environ.get("GROQ_API_KEY"),
-        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
-        "CEREBRAS_API_KEY": os.environ.get("CEREBRAS_API_KEY"),
-    }
-    for k, v in creds.items():
-        _yes(k, bool(v), "set" if v else "not set (env)")
-
     try:
-        from zhub.brains import detect, list_available
+        from zhub.brains import REGISTRY, list_available
+        seen: set[str] = set()
+        for cls in REGISTRY:
+            for key in cls.env_keys:
+                if key in seen:
+                    continue
+                seen.add(key)
+                v = os.environ.get(key)
+                _yes(key, bool(v), "set" if v else "not set (env)")
+
         avail = list_available()
         if avail:
             _yes("at least one brain detected", True,
@@ -76,7 +76,6 @@ def run(argv: list[str]) -> None:
 
     # 6) entity surface
     try:
-        import functools
         from pathlib import Path
         ent = Path(zhub.__file__).parent / "entity.md"
         _yes("entity.md ships with package", ent.exists(),
