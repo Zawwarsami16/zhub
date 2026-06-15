@@ -12,7 +12,6 @@ stdout contains URL, key, and a BYOK summary.
 import asyncio
 import os
 import socket
-import subprocess
 import sys
 import textwrap
 import time
@@ -32,6 +31,42 @@ def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("", 0))
         return s.getsockname()[1]
+
+
+def test_brain_choices_cover_every_registered_adapter():
+    """`--brain` help must list `auto` plus every adapter in REGISTRY, so
+    the help can't drift behind newly added brains (it once listed only
+    4 of 8)."""
+    from zhub.brains import REGISTRY
+    from zhub.cli_up import _brain_choices
+
+    choices = _brain_choices()
+    parts = [p.strip() for p in choices.split("|")]
+    assert parts[0] == "auto"
+    assert set(parts[1:]) == {c.name for c in REGISTRY}
+    # one entry per brain, no dupes
+    assert len(parts) == len(REGISTRY) + 1
+
+
+def test_brain_env_hint_covers_every_credential_key():
+    """The 'no brain available' hint must name every adapter's env key,
+    deduped in REGISTRY order — a user with only e.g. ANTHROPIC_API_KEY set
+    should see it listed, not just the original 4 keys."""
+    from zhub.brains import REGISTRY
+    from zhub.cli_up import _brain_env_hint
+
+    hint = _brain_env_hint()
+    listed = [p.strip() for p in hint.split("/")]
+    expected: list[str] = []
+    for c in REGISTRY:
+        for k in c.env_keys:
+            if k not in expected:
+                expected.append(k)
+    assert listed == expected
+    # the 4 keys the old hardcoded hint omitted are now present
+    for missing_before in ("ANTHROPIC_API_KEY", "TOGETHER_API_KEY",
+                           "MISTRAL_API_KEY", "COHERE_API_KEY"):
+        assert missing_before in listed
 
 
 @pytest.mark.asyncio
