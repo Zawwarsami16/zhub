@@ -74,9 +74,12 @@ class SlidingWindow:
         if len(bucket) < self.limit:
             bucket.append(now)
             return True, None
-        oldest = bucket[0]
-        retry_after = max(0.0, oldest + self.period - now)
-        return False, retry_after
+        # A non-positive limit (e.g. a publisher declaring "0/min") rejects
+        # every request and never appends, so the bucket is empty here — there
+        # is no oldest hit to expire against. Retry can only mean "after a full
+        # period", and we must not index an empty deque.
+        retry_after = (bucket[0] + self.period - now) if bucket else self.period
+        return False, max(0.0, retry_after)
 
     def clear(self, key: str) -> None:
         self._buckets.pop(key, None)

@@ -76,6 +76,26 @@ def test_sliding_window_per_key_isolation():
     assert w.check("a")[0] is False  # a hit limit
 
 
+def test_sliding_window_zero_limit_denies_without_crashing():
+    # A publisher declaring "0/min" parses to limit=0. Such a window must
+    # reject every request cleanly — never IndexError on an empty bucket.
+    clock = [0.0]
+    w = SlidingWindow(limit=0, period_seconds=60.0, now_fn=lambda: clock[0])
+    ok, retry_after = w.check("k")
+    assert ok is False
+    assert retry_after == 60.0
+    # Stays denied on repeat without ever appending a hit.
+    assert w.check("k") == (False, 60.0)
+
+
+def test_parse_zero_rate_then_check_is_safe():
+    # End-to-end: the parse → window path a publisher's "0/min" actually takes.
+    w = SlidingWindow(*parse_rate("0/min"))
+    ok, retry_after = w.check("client")
+    assert ok is False
+    assert retry_after == 60.0
+
+
 # ---- e2e enforcement ----
 
 try:
