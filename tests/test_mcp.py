@@ -5,13 +5,14 @@ The stub is a self-contained Python script defined inline that responds to
 No real MCP server dependency.
 """
 
+import asyncio
 import os
 import sys
 import tempfile
 
 import pytest
 
-from zhub.mcp import MCPClient
+from zhub.mcp import MCPClient, MCPError
 
 
 # A minimal stub MCP server. Reads JSON-RPC lines from stdin, writes responses
@@ -106,5 +107,46 @@ async def test_mcp_client_unknown_tool_raises(stub_script_path):
         with pytest.raises(Exception) as exc_info:
             await client.call_tool("nonexistent", {})
         assert "unknown tool" in str(exc_info.value).lower() or "32601" in str(exc_info.value)
+    finally:
+        await client.close()
+
+
+# A stub that completes the handshake, then exits (closing stdout) on the first
+# non-initialize request — i.e. the server dies mid-call without responding.
+DYING_STUB_SCRIPT = '''
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    rid = req.get("id")
+    if req.get("method") == "initialize":
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {}}) + "\\n")
+        sys.stdout.flush()
+    else:
+        sys.exit(0)
+'''
+
+
+@pytest.fixture
+def dying_stub_path():
+    fd, path = tempfile.mkstemp(suffix="_dying_stub.py")
+    with os.fdopen(fd, "w") as f:
+        f.write(DYING_STUB_SCRIPT)
+    yield path
+    os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_in_flight_request_fails_when_subprocess_exits(dying_stub_path):
+    # Regression: if the MCP server closes stdout (EOF) while a request is in
+    # flight, the reader loop used to just stop, leaving the request future
+    # unresolved forever. It must fail fast instead.
+    client = MCPClient([sys.executable, dying_stub_path])
+    await client.start()
+    try:
+        with pytest.raises(MCPError):
+            await asyncio.wait_for(client.call_tool("echo", {"text": "x"}), timeout=5.0)
     finally:
         await client.close()
