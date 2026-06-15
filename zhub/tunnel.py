@@ -75,7 +75,7 @@ class CloudflareTunnel:
             await self.close()
             raise RuntimeError(
                 f"cloudflared did not produce a public URL within {timeout}s — "
-                "check `cloudflared tunnel --url http://localhost:{self.local_port}` manually"
+                f"check `cloudflared tunnel --url http://localhost:{self.local_port}` manually"
             )
 
     async def close(self) -> None:
