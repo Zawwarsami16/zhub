@@ -32,6 +32,24 @@ from . import publish
 from .brains import detect, REGISTRY
 
 
+def _brain_choices() -> str:
+    """`--brain` accepts auto + every registered adapter, derived from the
+    REGISTRY so the help text can't drift when adapters are added."""
+    return " | ".join(["auto"] + [c.name for c in REGISTRY])
+
+
+def _brain_env_hint() -> str:
+    """The credential env vars across all adapters, deduped in priority
+    order — used by the 'no brain available' hint so it lists every brain
+    a user could enable, not a hardcoded subset."""
+    keys: list[str] = []
+    for c in REGISTRY:
+        for k in c.env_keys:
+            if k not in keys:
+                keys.append(k)
+    return " / ".join(keys)
+
+
 def _free_port_from(start: int) -> int:
     """Return `start` if free, otherwise the OS-allocated free port."""
     try:
@@ -155,8 +173,8 @@ async def _run(args: argparse.Namespace) -> int:
     pub = None
     if brain is None:
         print(f"[zhub up] no brain available (asked for {args.brain!r}); "
-              "the hub is up but nothing is published. set OLLAMA_HOST or "
-              "GROQ_API_KEY / OPENAI_API_KEY / CEREBRAS_API_KEY and re-run.",
+              "the hub is up but nothing is published. set one of "
+              f"{_brain_env_hint()} and re-run.",
               file=sys.stderr, flush=True)
     else:
         async def chat_handler(messages, options):
@@ -250,7 +268,7 @@ def run(argv: list[str]) -> None:
                              "to have been run once at setup")
     parser.add_argument("--name", default=os.environ.get("ZHUB_NAME", "me"))
     parser.add_argument("--brain", default="auto",
-                        help="auto | ollama | groq | openai | cerebras")
+                        help=_brain_choices())
     parser.add_argument("--db", default="zhub.db",
                         help="SQLite path for persistence (empty to disable)")
     args = parser.parse_args(argv)
