@@ -59,6 +59,13 @@ class PeerRegistry:
                 data = []
         except Exception as e:
             log.warning("peer %s unreachable: %s", peer_url, e)
+            # Negatively cache the failure: without this a dead peer is
+            # re-fetched on every aggregate() call, paying the full request
+            # timeout each time and hammering the down peer — the
+            # refresh_seconds throttle only ever protected successful fetches.
+            # An empty entry is retried once the window expires, same as a
+            # stale success.
+            self._cache[peer_url] = ([], time.time())
             return []
         self._cache[peer_url] = (data, time.time())
         return data
