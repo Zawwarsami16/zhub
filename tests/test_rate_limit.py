@@ -107,7 +107,7 @@ except ImportError:
 
 if SERVER_AVAILABLE:
     from zhub.server import create_app
-from zhub import publish, Manifest, Capability
+from zhub import publish
 
 
 def _free_port() -> int:
