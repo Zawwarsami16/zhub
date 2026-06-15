@@ -26,6 +26,7 @@ _DEFAULT_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
 class TogetherAdapter(BrainAdapter):
     name = "together"
     label = "Together AI (Llama 3.3 70B Turbo)"
+    env_keys = ("TOGETHER_API_KEY",)
 
     def __init__(
         self,

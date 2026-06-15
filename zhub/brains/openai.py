@@ -27,6 +27,7 @@ _DEFAULT_MODEL = "gpt-4o-mini"
 class OpenAIAdapter(BrainAdapter):
     name = "openai"
     label = "OpenAI (gpt-4o)"
+    env_keys = ("OPENAI_API_KEY",)
 
     def __init__(
         self,

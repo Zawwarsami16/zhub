@@ -24,6 +24,7 @@ _DEFAULT_MODEL = "llama-3.3-70b-versatile"
 class GroqAdapter(BrainAdapter):
     name = "groq"
     label = "Groq Llama 3.3 70B"
+    env_keys = ("GROQ_API_KEY",)
 
     def __init__(
         self,

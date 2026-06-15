@@ -25,6 +25,7 @@ _DEFAULT_MODEL = "llama3.2"
 class OllamaAdapter(BrainAdapter):
     name = "ollama"
     label = "Ollama (local)"
+    env_keys = ("OLLAMA_HOST",)
 
     def __init__(
         self,

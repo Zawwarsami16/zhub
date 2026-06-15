@@ -30,6 +30,7 @@ _API_VERSION = "2023-06-01"
 class AnthropicAdapter(BrainAdapter):
     name = "anthropic"
     label = "Anthropic Claude"
+    env_keys = ("ANTHROPIC_API_KEY",)
 
     def __init__(
         self,

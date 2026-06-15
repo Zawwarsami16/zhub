@@ -26,6 +26,7 @@ _DEFAULT_MODEL = "mistral-large-latest"
 class MistralAdapter(BrainAdapter):
     name = "mistral"
     label = "Mistral Large"
+    env_keys = ("MISTRAL_API_KEY",)
 
     def __init__(
         self,

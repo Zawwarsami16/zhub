@@ -32,6 +32,7 @@ _DEFAULT_MODEL = "command-r-plus-08-2024"
 class CohereAdapter(BrainAdapter):
     name = "cohere"
     label = "Cohere Command-R+"
+    env_keys = ("COHERE_API_KEY",)
 
     def __init__(
         self,

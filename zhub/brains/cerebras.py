@@ -25,6 +25,7 @@ _DEFAULT_MODEL = "llama-3.3-70b"
 class CerebrasAdapter(BrainAdapter):
     name = "cerebras"
     label = "Cerebras Llama 3.1 405B"
+    env_keys = ("CEREBRAS_API_KEY",)
 
     def __init__(
         self,

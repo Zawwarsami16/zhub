@@ -43,6 +43,7 @@ class BrainAdapter(abc.ABC):
 
     name: str = ""    # short id, e.g. "ollama"
     label: str = ""   # human-readable, e.g. "Ollama (local)"
+    env_keys: tuple[str, ...] = ()  # env vars try_init() reads to credential this adapter
 
     @classmethod
     @abc.abstractmethod
