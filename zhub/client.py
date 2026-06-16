@@ -316,11 +316,11 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
         if inspect.isgenerator(result):
             if streaming_requested:
                 for chunk in result:
-                    await ws.send(chat_chunk(str(chunk), env.request_id).to_json())
+                    await ws.send(_serialize_stream_chunk(chunk, env.request_id))
                 await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
                 return
             else:
-                accumulated = "".join(str(c) for c in result)
+                accumulated = "".join(_chunk_to_text(c) for c in result)
                 payload = {"text": accumulated, "finish_reason": "stop"}
                 await ws.send(Envelope(type="chat-response", request_id=env.request_id, payload=payload).to_json())
                 return
