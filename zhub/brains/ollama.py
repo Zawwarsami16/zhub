@@ -74,6 +74,23 @@ class OllamaAdapter(BrainAdapter):
         async with self._http.stream(
             "POST", f"{self.base_url}/api/chat", json=body,
         ) as response:
+            # A non-2xx (404 unknown model, 400 bad request, 5xx) returns a
+            # single JSON error object like {"error": "model ... not found"},
+            # not newline-delimited chat events — the loop below would find no
+            # message.content, never see done=True, and the generator would end
+            # yielding nothing (or one empty delta): a silent empty completion
+            # with no diagnostic. Raise so the publisher surfaces a real error,
+            # matching the openai-compat / anthropic / cohere adapters. getattr
+            # default keeps test doubles working; real httpx responses always
+            # have status_code.
+            status = getattr(response, "status_code", 200)
+            if status >= 400:
+                try:
+                    detail = (await response.aread()).decode("utf-8", "replace").strip()
+                except Exception:
+                    detail = ""
+                snippet = f": {detail[:300]}" if detail else ""
+                raise RuntimeError(f"upstream returned HTTP {status}{snippet}")
             async for line in response.aiter_lines():
                 if not line.strip():
                     continue
