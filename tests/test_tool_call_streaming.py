@@ -220,6 +220,135 @@ async def test_auto_mode_resolves_and_continues_stream(hub):
 
 
 @pytest.mark.asyncio
+async def test_combined_tool_call_done_chunk_keeps_finish_reason(hub):
+    """Regression: a publisher may flag its last tool_call delta with done +
+    finish_reason in ONE chunk (a shape _serialize_stream_chunk supports and
+    the hub relays verbatim), instead of a separate trailing finish chunk. The
+    SSE consumer must still surface finish_reason: tool_calls — not silently
+    drop it because the tool_call branch short-circuits the done check."""
+
+    async def chat_handler(messages, options):
+        # delta + done + finish_reason all in a single envelope
+        yield {
+            "tool_call_delta": {
+                "index": 0,
+                "id": "call_combined",
+                "type": "function",
+                "function": {"name": "do_thing", "arguments": "{\"a\":1}"},
+            },
+            "done": True,
+            "finish_reason": "tool_calls",
+        }
+
+    pub = publish(
+        name="combined-tc-bot",
+        description="combined tool_call+done chunk",
+        chat_handler=chat_handler,
+        hub_url=f"ws://127.0.0.1:{hub}",
+    )
+    for _ in range(50):
+        if pub.api_key:
+            break
+        await asyncio.sleep(0.1)
+
+    async with httpx.AsyncClient(timeout=5.0) as c:
+        resp = await c.post(
+            f"http://127.0.0.1:{hub}/{pub.name}/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "go"}],
+                  "stream": True},
+            headers={"Authorization": f"Bearer {pub.api_key}"},
+        )
+    assert resp.status_code == 200
+    chunks = _parse_sse(resp.text)
+    assert chunks, f"empty SSE: {resp.text!r}"
+
+    tcs = [c for c in chunks
+           if c.get("choices", [{}])[0].get("delta", {}).get("tool_calls")]
+    assert tcs, f"no tool_call delta SSE chunk found: {chunks!r}"
+
+    finish = next(
+        (c["choices"][0].get("finish_reason") for c in reversed(chunks)
+         if c["choices"][0].get("finish_reason")),
+        None,
+    )
+    assert finish == "tool_calls", (
+        f"combined tool_call+done chunk lost finish_reason: {chunks!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_resolves_combined_tool_call_done_chunk(hub):
+    """Auto mode must auto-resolve even when the tool_call delta and its
+    done/finish:tool_calls ride in a single combined chunk. Before the fix the
+    tool_call branch `continue`d past the done check, final_finish stayed
+    'stop', and the capability never fired."""
+    invoke_n = {"n": 0}
+    call_n = {"n": 0}
+
+    async def chat_handler(messages, options):
+        call_n["n"] += 1
+        if call_n["n"] == 1:
+            yield {
+                "tool_call_delta": {
+                    "index": 0,
+                    "id": "call_ac",
+                    "type": "function",
+                    "function": {"name": "auto_combined",
+                                 "arguments": json.dumps({"x": 1})},
+                },
+                "done": True,
+                "finish_reason": "tool_calls",
+            }
+        else:
+            for piece in ("ok ", "done"):
+                yield piece
+
+    def thing_handler(args):
+        invoke_n["n"] += 1
+        return {"got": args, "result": "fired"}
+
+    pub = publish(
+        name="auto-combined-bot",
+        description="auto mode combined chunk",
+        chat_handler=chat_handler,
+        hub_url=f"ws://127.0.0.1:{hub}",
+    )
+    for _ in range(50):
+        if pub.api_key:
+            break
+        await asyncio.sleep(0.1)
+
+    conn = connect(
+        ai_name=pub.name, api_key=pub.api_key,
+        hub_url=f"ws://127.0.0.1:{hub}",
+        capabilities={"auto_combined": ({"type": "object"}, thing_handler)},
+    )
+    await asyncio.sleep(0.6)
+
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        resp = await c.post(
+            f"http://127.0.0.1:{hub}/{pub.name}/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "go"}],
+                  "stream": True},
+            headers={
+                "Authorization": f"Bearer {pub.api_key}",
+                "X-Zhub-Stream-Tools": "auto",
+            },
+        )
+    assert resp.status_code == 200
+    chunks = _parse_sse(resp.text)
+    assert chunks
+
+    text = "".join(
+        c["choices"][0].get("delta", {}).get("content", "") or ""
+        for c in chunks
+    )
+    assert "ok" in text and "done" in text, f"missing follow-up text: {text!r}"
+    assert invoke_n["n"] == 1, "capability did not fire on combined chunk"
+    assert call_n["n"] == 2, "publisher follow-up not requested"
+
+
+@pytest.mark.asyncio
 async def test_pre_resolve_mode_still_works(hub):
     """Phase 4.2 pre-resolve path is untouched."""
     call_n = {"n": 0}
