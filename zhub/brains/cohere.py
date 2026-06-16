@@ -91,6 +91,20 @@ class CohereAdapter(BrainAdapter):
         async with self._http.stream(
             "POST", f"{_BASE_URL}/v2/chat", json=body, headers=headers,
         ) as response:
+            # Non-2xx (429 rate limit, 401 bad key, 5xx) returns a JSON error
+            # body, not newline-delimited content-delta events, so the loop
+            # below would skip every line and end yielding nothing — a silent
+            # empty completion. Raise so the publisher surfaces a real error.
+            # getattr default keeps test doubles working; real httpx responses
+            # always have status_code.
+            status = getattr(response, "status_code", 200)
+            if status >= 400:
+                try:
+                    detail = (await response.aread()).decode("utf-8", "replace").strip()
+                except Exception:
+                    detail = ""
+                snippet = f": {detail[:300]}" if detail else ""
+                raise RuntimeError(f"upstream returned HTTP {status}{snippet}")
             async for line in response.aiter_lines():
                 line = line.strip()
                 if not line:
