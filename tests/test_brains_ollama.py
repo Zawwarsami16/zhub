@@ -13,12 +13,17 @@ from zhub.brains.ollama import OllamaAdapter
 # ---- helpers --------------------------------------------------------------
 
 class _FakeStream:
-    def __init__(self, lines: Iterable[str]):
+    def __init__(self, lines: Iterable[str], status_code: int = 200, body: bytes = b""):
         self._lines = list(lines)
+        self.status_code = status_code
+        self._body = body
 
     async def aiter_lines(self):
         for line in self._lines:
             yield line
+
+    async def aread(self):
+        return self._body
 
     async def __aenter__(self):
         return self
@@ -28,13 +33,15 @@ class _FakeStream:
 
 
 class _FakeAsyncClient:
-    def __init__(self, lines: Iterable[str]):
+    def __init__(self, lines: Iterable[str], status_code: int = 200, body: bytes = b""):
         self._lines = list(lines)
+        self._status_code = status_code
+        self._body = body
         self.last_call: dict | None = None
 
     def stream(self, method, url, **kw):
         self.last_call = {"method": method, "url": url, **kw}
-        return _FakeStream(self._lines)
+        return _FakeStream(self._lines, status_code=self._status_code, body=self._body)
 
     async def aclose(self):
         pass
@@ -112,3 +119,20 @@ async def test_stream_skips_empty_and_malformed_lines():
     out = [c async for c in adapter.stream([{"role": "user", "content": "hi"}])]
     assert [c.delta for c in out] == ["ok"]
     assert out[-1].done is True
+
+
+@pytest.mark.asyncio
+async def test_stream_raises_on_upstream_error():
+    """A non-2xx response (e.g. 404 unknown model) returns a JSON error body,
+    not chat events. Without a status guard the loop skips it and yields an
+    empty completion silently; the adapter must raise with status + detail."""
+    body = json.dumps({"error": "model 'ghost' not found"}).encode("utf-8")
+    fake = _FakeAsyncClient([body.decode()], status_code=404, body=body)
+    adapter = OllamaAdapter(base_url="http://x", model="ghost", http=fake)
+
+    with pytest.raises(RuntimeError) as ei:
+        async for _ in adapter.stream([{"role": "user", "content": "hi"}]):
+            pass
+    msg = str(ei.value)
+    assert "404" in msg
+    assert "model 'ghost' not found" in msg
