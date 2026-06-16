@@ -400,9 +400,15 @@ class ZhubConnection:
                     break
                 if item is None:
                     break
+                # Yield any content on this chunk BEFORE honoring `done`, so a
+                # publisher that flags its final content chunk with done=True
+                # (delta + done in one envelope) doesn't lose that last delta.
+                # Matches the HTTP SSE path, which emits text before the finish.
+                delta = item.get("delta", "")
+                if delta:
+                    yield delta
                 if item.get("done"):
                     break
-                yield item.get("delta", "")
         finally:
             self._streams.pop(env.request_id, None)
 
