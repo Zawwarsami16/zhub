@@ -1760,7 +1760,9 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                                              "finish_reason": None}],
                             }
                             yield f"data: {json.dumps(sse)}\n\n"
-                            continue
+                            # fall through: a publisher may carry done/finish_reason
+                            # in the same chunk as its final tool_call delta, so the
+                            # done check below must still run.
                         if text:
                             sse = {
                                 "id": completion_id,
