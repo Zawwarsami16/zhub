@@ -122,11 +122,59 @@ class CohereAdapter(BrainAdapter):
                     text = content.get("text") or ""
                     if text:
                         yield ChatChunk(delta=text, done=False, raw=data)
+                elif kind == "tool-call-start":
+                    # A tool call opens here carrying its id + name; the argument
+                    # JSON arrives later as tool-call-delta fragments. Surface the
+                    # opener as a tool_call_delta so the hub records the call's
+                    # identity — without this a Cohere-backed AI could never
+                    # resolve a capability (silent loss, like Ollama/Anthropic
+                    # were). The event's `index` doubles as the tool_call index so
+                    # parallel calls accumulate in separate slots.
+                    delta = data.get("delta") or {}
+                    msg = delta.get("message") or {}
+                    tc = msg.get("tool_calls") or {}
+                    fn = tc.get("function") or {}
+                    idx = data.get("index", 0)
+                    yield ChatChunk(
+                        delta="", done=False,
+                        tool_call_delta={
+                            "index": idx,
+                            "id": tc.get("id") or f"call_{idx}",
+                            "type": tc.get("type") or "function",
+                            "function": {
+                                "name": fn.get("name", ""),
+                                "arguments": fn.get("arguments", ""),
+                            },
+                        },
+                        raw=data,
+                    )
+                elif kind == "tool-call-delta":
+                    # Incremental tool-argument JSON; the hub concatenates these
+                    # "arguments" fragments, so pass them through verbatim under
+                    # the same call index.
+                    delta = data.get("delta") or {}
+                    msg = delta.get("message") or {}
+                    tc = msg.get("tool_calls") or {}
+                    fn = tc.get("function") or {}
+                    yield ChatChunk(
+                        delta="", done=False,
+                        tool_call_delta={
+                            "index": data.get("index", 0),
+                            "function": {"arguments": fn.get("arguments", "")},
+                        },
+                        raw=data,
+                    )
                 elif kind == "message-end":
                     delta = data.get("delta") or {}
                     finish = delta.get("finish_reason") or "stop"
-                    # Cohere uses "complete"; normalize to "stop"
-                    if finish == "complete":
+                    # Cohere returns reasons like COMPLETE / TOOL_CALL (casing
+                    # varies by version); match case-insensitively. The hub keys
+                    # auto-resolution off finish_reason == "tool_calls", so map a
+                    # tool-call turn to that; "complete" → "stop".
+                    low = finish.lower()
+                    if low == "tool_call":
+                        finish = "tool_calls"
+                    elif low == "complete":
                         finish = "stop"
                     yield ChatChunk(
                         delta="", done=True,
