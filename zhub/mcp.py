@@ -42,11 +42,21 @@ class MCPError(Exception):
 class MCPClient:
     """A JSON-RPC-over-stdio client for an MCP server subprocess."""
 
-    def __init__(self, command: list[str], env: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        command: list[str],
+        env: dict[str, str] | None = None,
+        request_timeout: float | None = 60.0,
+    ) -> None:
         if not command:
             raise ValueError("command list must not be empty")
         self.command = command
         self.env = env
+        # Bound every request, not just initialize. A subprocess that stays
+        # alive but never answers (hung tool, dropped request, protocol
+        # desync) would otherwise hang the caller forever — only EOF and crash
+        # resolve pending futures. None disables the bound (wait indefinitely).
+        self.request_timeout = request_timeout
         self.process: asyncio.subprocess.Process | None = None
         self._next_id = 0
         self._pending: dict[int, asyncio.Future] = {}
@@ -147,7 +157,11 @@ class MCPClient:
             raise MCPError(f"failed to send: {e}") from e
 
         try:
-            return await future
+            return await asyncio.wait_for(future, timeout=self.request_timeout)
+        except asyncio.TimeoutError as e:
+            raise MCPError(
+                f"request '{method}' timed out after {self.request_timeout}s"
+            ) from e
         finally:
             self._pending.pop(req_id, None)
 
