@@ -275,15 +275,52 @@ def _serialize_stream_chunk(chunk: Any, request_id: str) -> str:
     return Envelope(type="chat-chunk", request_id=request_id, payload=payload).to_json()
 
 
-def _chunk_to_text(chunk: Any) -> str:
-    """For non-streaming accumulation: extract just the text fragment."""
+def _chunk_fields(chunk: Any) -> tuple[str, Any, Optional[str]]:
+    """For non-streaming accumulation: pull (text, tool_call_delta,
+    finish_reason) out of a raw chat_handler chunk (str, dict, or
+    ChatChunk-shaped object)."""
     if isinstance(chunk, str):
-        return chunk
-    if hasattr(chunk, "delta"):
-        return getattr(chunk, "delta", "") or ""
+        return chunk, None, None
     if isinstance(chunk, dict):
-        return chunk.get("delta", "") or ""
-    return str(chunk)
+        return (chunk.get("delta", "") or "",
+                chunk.get("tool_call_delta"),
+                chunk.get("finish_reason"))
+    return (getattr(chunk, "delta", "") or "",
+            getattr(chunk, "tool_call_delta", None),
+            getattr(chunk, "finish_reason", None))
+
+
+def _accumulate_tool_call(slots: dict[int, dict], tcd: dict) -> None:
+    """Fold one tool_call delta into ``slots`` keyed by index, mirroring the
+    hub's streaming accumulator (server.py): set id/type once, keep the
+    function name, and concatenate argument fragments."""
+    idx = tcd.get("index", 0)
+    slot = slots.setdefault(idx, {"function": {}})
+    if "id" in tcd:
+        slot["id"] = tcd["id"]
+    if "type" in tcd:
+        slot["type"] = tcd["type"]
+    fn_in = tcd.get("function") or {}
+    if "name" in fn_in:
+        slot.setdefault("function", {})["name"] = fn_in["name"]
+    if "arguments" in fn_in:
+        slot.setdefault("function", {}).setdefault("arguments", "")
+        slot["function"]["arguments"] += fn_in["arguments"]
+
+
+def _finalize_accumulated(
+    text_parts: list[str], tc_slots: dict[int, dict], finish: Optional[str],
+) -> dict[str, Any]:
+    """Build a non-streaming chat-response payload from accumulated text +
+    tool calls. Carries the real finish_reason and any tool_calls so the hub
+    can auto-resolve capabilities (which it gates on response['tool_calls'])."""
+    payload: dict[str, Any] = {
+        "text": "".join(text_parts),
+        "finish_reason": finish or "stop",
+    }
+    if tc_slots:
+        payload["tool_calls"] = [tc_slots[i] for i in sorted(tc_slots)]
+    return payload
 
 
 async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
@@ -307,10 +344,18 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
                 await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
                 return
             else:
-                accumulated = []
+                text_parts: list[str] = []
+                tc_slots: dict[int, dict] = {}
+                final_finish: Optional[str] = None
                 async for chunk in result:
-                    accumulated.append(_chunk_to_text(chunk))
-                payload = {"text": "".join(accumulated), "finish_reason": "stop"}
+                    text, tcd, finish = _chunk_fields(chunk)
+                    if text:
+                        text_parts.append(text)
+                    if tcd:
+                        _accumulate_tool_call(tc_slots, tcd)
+                    if finish:
+                        final_finish = finish
+                payload = _finalize_accumulated(text_parts, tc_slots, final_finish)
                 await ws.send(Envelope(type="chat-response", request_id=env.request_id, payload=payload).to_json())
                 return
         if inspect.isgenerator(result):
@@ -320,8 +365,18 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
                 await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
                 return
             else:
-                accumulated = "".join(_chunk_to_text(c) for c in result)
-                payload = {"text": accumulated, "finish_reason": "stop"}
+                text_parts = []
+                tc_slots = {}
+                final_finish = None
+                for chunk in result:
+                    text, tcd, finish = _chunk_fields(chunk)
+                    if text:
+                        text_parts.append(text)
+                    if tcd:
+                        _accumulate_tool_call(tc_slots, tcd)
+                    if finish:
+                        final_finish = finish
+                payload = _finalize_accumulated(text_parts, tc_slots, final_finish)
                 await ws.send(Envelope(type="chat-response", request_id=env.request_id, payload=payload).to_json())
                 return
 

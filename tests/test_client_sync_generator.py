@@ -1,7 +1,7 @@
 """Unit coverage for sync-generator chat handlers in _handle_chat.
 
 A chat_handler may be a *sync* generator. The async-gen path serializes each
-yielded chunk through _serialize_stream_chunk / _chunk_to_text, which extract
+yielded chunk through _serialize_stream_chunk / _chunk_fields, which extract
 the delta (and preserve tool_call_delta / done / finish_reason) for dict- and
 ChatChunk-shaped chunks. The sync-gen path historically called str(chunk),
 which stringified a dict chunk into its Python repr (e.g. "{'delta': 'hi'}")
