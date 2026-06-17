@@ -121,12 +121,45 @@ class AnthropicAdapter(BrainAdapter):
                 except json.JSONDecodeError:
                     continue
                 kind = data.get("type")
-                if kind == "content_block_delta":
+                if kind == "content_block_start":
+                    # A tool_use block opens here with its id + name; the
+                    # argument JSON arrives later as input_json_delta fragments.
+                    # Surface the opener as a tool_call_delta so the hub records
+                    # the call's identity — without this an Anthropic-backed AI
+                    # could never resolve a capability (silent loss, like Ollama
+                    # was). The block index doubles as the tool_call index, so
+                    # parallel tool_use blocks accumulate in separate slots.
+                    block = data.get("content_block") or {}
+                    if block.get("type") == "tool_use":
+                        yield ChatChunk(
+                            delta="", done=False,
+                            tool_call_delta={
+                                "index": data.get("index", 0),
+                                "id": block.get("id") or f"call_{data.get('index', 0)}",
+                                "type": "function",
+                                "function": {"name": block.get("name", ""), "arguments": ""},
+                            },
+                            raw=data,
+                        )
+                elif kind == "content_block_delta":
                     delta_obj = data.get("delta") or {}
-                    if delta_obj.get("type") == "text_delta":
+                    dtype = delta_obj.get("type")
+                    if dtype == "text_delta":
                         yield ChatChunk(
                             delta=delta_obj.get("text", ""),
                             done=False,
+                            raw=data,
+                        )
+                    elif dtype == "input_json_delta":
+                        # Incremental tool-argument JSON; the hub concatenates
+                        # these "arguments" fragments, so pass partial_json through
+                        # verbatim under the same block index.
+                        yield ChatChunk(
+                            delta="", done=False,
+                            tool_call_delta={
+                                "index": data.get("index", 0),
+                                "function": {"arguments": delta_obj.get("partial_json", "")},
+                            },
                             raw=data,
                         )
                 elif kind == "message_delta":
@@ -134,9 +167,13 @@ class AnthropicAdapter(BrainAdapter):
                     if fr:
                         finish_reason = fr
                 elif kind == "message_stop":
+                    # Anthropic labels a tool-call turn stop_reason="tool_use",
+                    # but the hub keys auto-resolution off finish_reason ==
+                    # "tool_calls" (server.py); map it so the capability fires.
+                    final = "tool_calls" if finish_reason == "tool_use" else (finish_reason or "end_turn")
                     yield ChatChunk(
                         delta="", done=True,
-                        finish_reason=finish_reason or "end_turn",
+                        finish_reason=final,
                         raw=data,
                     )
                     return
