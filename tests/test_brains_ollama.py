@@ -122,6 +122,74 @@ async def test_stream_skips_empty_and_malformed_lines():
 
 
 @pytest.mark.asyncio
+async def test_stream_forwards_tools_to_request_body():
+    """Ollama's /api/chat supports a top-level `tools` field. The adapter must
+    forward declared tools (like its sibling adapters) — otherwise the model is
+    never told they exist and can never emit a tool call."""
+    tools = [{
+        "type": "function",
+        "function": {"name": "get_weather", "parameters": {"type": "object"}},
+    }]
+    fake = _FakeAsyncClient([
+        json.dumps({"message": {"content": "hi"}, "done": True, "done_reason": "stop"}),
+    ])
+    adapter = OllamaAdapter(base_url="http://x", model="llama3.2", http=fake)
+    async for _ in adapter.stream([{"role": "user", "content": "weather?"}], tools=tools):
+        pass
+    assert fake.last_call["json"]["tools"] == tools
+
+
+@pytest.mark.asyncio
+async def test_stream_omits_tools_when_none():
+    """No tools passed → no `tools` key in the body (don't send an empty field)."""
+    fake = _FakeAsyncClient([
+        json.dumps({"message": {"content": "hi"}, "done": True, "done_reason": "stop"}),
+    ])
+    adapter = OllamaAdapter(base_url="http://x", model="llama3.2", http=fake)
+    async for _ in adapter.stream([{"role": "user", "content": "hi"}]):
+        pass
+    assert "tools" not in fake.last_call["json"]
+
+
+@pytest.mark.asyncio
+async def test_stream_surfaces_tool_calls_as_deltas():
+    """Ollama returns tool calls in `message.tool_calls` with a dict of
+    arguments. The adapter must re-shape each into a hub-shaped tool_call_delta
+    (string arguments) and report finish_reason='tool_calls' so the hub's
+    auto-resolution fires — dropping them left an Ollama AI unable to call tools."""
+    lines = [
+        json.dumps({"message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "get_weather", "arguments": {"city": "SF"}}},
+                {"function": {"name": "get_time", "arguments": {"tz": "PST"}}},
+            ],
+        }, "done": True, "done_reason": "stop"}),
+    ]
+    fake = _FakeAsyncClient(lines)
+    adapter = OllamaAdapter(base_url="http://x", model="llama3.2", http=fake)
+    out: list[ChatChunk] = []
+    async for chunk in adapter.stream([{"role": "user", "content": "weather + time?"}]):
+        out.append(chunk)
+
+    tcds = [c.tool_call_delta for c in out if c.tool_call_delta]
+    assert len(tcds) == 2
+    assert tcds[0]["index"] == 0
+    assert tcds[0]["type"] == "function"
+    assert tcds[0]["id"]  # synthesized, non-empty
+    assert tcds[0]["function"]["name"] == "get_weather"
+    # arguments must be a JSON string, not a dict (the hub concatenates them)
+    assert tcds[0]["function"]["arguments"] == json.dumps({"city": "SF"})
+    assert tcds[1]["index"] == 1
+    assert tcds[1]["function"]["name"] == "get_time"
+
+    # the turn ended in a tool call → finish_reason normalized to tool_calls
+    assert out[-1].done is True
+    assert out[-1].finish_reason == "tool_calls"
+
+
+@pytest.mark.asyncio
 async def test_stream_raises_on_upstream_error():
     """A non-2xx response (e.g. 404 unknown model) returns a JSON error body,
     not chat events. Without a status guard the loop skips it and yields an
