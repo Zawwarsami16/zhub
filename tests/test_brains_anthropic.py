@@ -5,7 +5,6 @@ from typing import Iterable
 import httpx
 import pytest
 
-from zhub.brains.base import ChatChunk
 from zhub.brains.anthropic import AnthropicAdapter
 
 
@@ -96,6 +95,55 @@ async def test_stream_parses_anthropic_sse():
     assert body["messages"][-1] == {"role": "user", "content": "hi"}
     assert headers["x-api-key"] == "sk-ant-xyz"
     assert headers["anthropic-version"]
+
+
+@pytest.mark.asyncio
+async def test_stream_surfaces_tool_use_as_deltas():
+    """A tool_use turn opens with content_block_start (id + name), streams its
+    arguments as input_json_delta fragments, and ends stop_reason=tool_use.
+    The adapter must surface a tool_call_delta opener, the concatenable argument
+    fragments under the same block index, and map the finish to 'tool_calls' so
+    the hub's auto-resolution fires."""
+    lines = [
+        'data: {"type":"message_start","message":{"id":"msg_x"}}',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_42","name":"get_weather","input":{}}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"city\\":"}}',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"Paris\\"}"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+        'data: {"type":"message_stop"}',
+    ]
+    fake = _FakeAsyncClient(lines)
+    adapter = AnthropicAdapter(api_key="sk-ant-xyz", model="claude-sonnet-4-5", http=fake)
+    out = [c async for c in adapter.stream(
+        [{"role": "user", "content": "weather?"}],
+        tools=[{"type": "function", "function": {"name": "get_weather"}}],
+    )]
+
+    # tools forwarded into the request body
+    assert fake.last_call["json"]["tools"][0]["function"]["name"] == "get_weather"
+
+    tcds = [c.tool_call_delta for c in out if c.tool_call_delta]
+    # opener carries id + name under the block index
+    assert tcds[0]["index"] == 1
+    assert tcds[0]["id"] == "toolu_42"
+    assert tcds[0]["function"]["name"] == "get_weather"
+    # argument fragments concatenate to valid JSON for the hub
+    args = "".join(t["function"].get("arguments", "") for t in tcds)
+    assert args == '{"city":"Paris"}'
+    assert all(t["index"] == 1 for t in tcds)
+    # finish mapped from anthropic's "tool_use" to the hub's "tool_calls"
+    assert out[-1].done is True
+    assert out[-1].finish_reason == "tool_calls"
+
+
+@pytest.mark.asyncio
+async def test_stream_omits_tools_when_none():
+    fake = _FakeAsyncClient([
+        'data: {"type":"message_stop"}',
+    ])
+    adapter = AnthropicAdapter(api_key="sk-ant-xyz", model="claude-sonnet-4-5", http=fake)
+    [c async for c in adapter.stream([{"role": "user", "content": "hi"}])]
+    assert "tools" not in fake.last_call["json"]
 
 
 def test_anthropic_in_default_registry():
