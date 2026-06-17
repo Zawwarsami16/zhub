@@ -146,6 +146,68 @@ async def test_cohere_stream_parses_v2_event_shape():
     assert headers["Authorization"] == "Bearer co_test"
 
 
+@pytest.mark.asyncio
+async def test_cohere_stream_surfaces_tool_calls_as_deltas():
+    """Cohere v2 streams tool calls as tool-call-start (id + name) followed by
+    tool-call-delta argument fragments, ending finish_reason=TOOL_CALL. The
+    adapter must surface these as hub-shaped tool_call_deltas (string-concat
+    arguments) and map the finish to "tool_calls" — otherwise a Cohere-backed
+    AI can never resolve a capability (sibling of the ollama/anthropic gaps)."""
+    lines = [
+        json.dumps({"type": "message-start", "id": "m"}),
+        json.dumps({"type": "tool-call-start", "index": 0,
+                    "delta": {"message": {"tool_calls": {
+                        "id": "tc_1", "type": "function",
+                        "function": {"name": "get_weather", "arguments": ""}}}}}),
+        json.dumps({"type": "tool-call-delta", "index": 0,
+                    "delta": {"message": {"tool_calls": {
+                        "function": {"arguments": "{\"city\""}}}}}),
+        json.dumps({"type": "tool-call-delta", "index": 0,
+                    "delta": {"message": {"tool_calls": {
+                        "function": {"arguments": ":\"Paris\"}"}}}}}),
+        json.dumps({"type": "message-end",
+                    "delta": {"finish_reason": "TOOL_CALL"}}),
+    ]
+    fake = _FakeAsyncClient(lines)
+    a = CohereAdapter(api_key="co_test", model="command-r-plus-08-2024",
+                      http=fake)
+    tools = [{"type": "function", "function": {"name": "get_weather"}}]
+    out = [c async for c in a.stream([{"role": "user", "content": "x"}],
+                                     tools=tools)]
+    # tools forwarded into the request body
+    assert fake.last_call["json"]["tools"] == tools
+    tcds = [c.tool_call_delta for c in out if c.tool_call_delta]
+    assert len(tcds) == 3
+    # opener carries id + name under index 0
+    assert tcds[0]["index"] == 0
+    assert tcds[0]["id"] == "tc_1"
+    assert tcds[0]["type"] == "function"
+    assert tcds[0]["function"]["name"] == "get_weather"
+    # argument fragments concatenate to the full JSON, all under index 0
+    args = "".join(t["function"]["arguments"] for t in tcds)
+    assert args == "{\"city\":\"Paris\"}"
+    assert all(t["index"] == 0 for t in tcds)
+    # tool-call turn finish maps to the hub's "tool_calls"
+    assert out[-1].done is True
+    assert out[-1].finish_reason == "tool_calls"
+
+
+@pytest.mark.asyncio
+async def test_cohere_stream_omits_tools_when_none():
+    """No tools passed → no `tools` key in the request body."""
+    lines = [
+        json.dumps({"type": "content-delta",
+                    "delta": {"message": {"content": {"text": "hi"}}}}),
+        json.dumps({"type": "message-end",
+                    "delta": {"finish_reason": "complete"}}),
+    ]
+    fake = _FakeAsyncClient(lines)
+    a = CohereAdapter(api_key="co_test", model="command-r-plus-08-2024",
+                      http=fake)
+    _ = [c async for c in a.stream([{"role": "user", "content": "x"}])]
+    assert "tools" not in fake.last_call["json"]
+
+
 class _FakeErrorStream:
     def __init__(self, status_code, body):
         self.status_code = status_code
