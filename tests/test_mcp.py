@@ -150,3 +150,46 @@ async def test_in_flight_request_fails_when_subprocess_exits(dying_stub_path):
             await asyncio.wait_for(client.call_tool("echo", {"text": "x"}), timeout=5.0)
     finally:
         await client.close()
+
+
+# A stub that completes the handshake then stays alive but silently ignores
+# every subsequent request — no response, no EOF. The exact case the EOF fix
+# doesn't cover: a hung/unresponsive-but-living server.
+SILENT_STUB_SCRIPT = '''
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    rid = req.get("id")
+    if req.get("method") == "initialize":
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {}}) + "\\n")
+        sys.stdout.flush()
+    # any other method: read it and never answer, keeping the process alive
+'''
+
+
+@pytest.fixture
+def silent_stub_path():
+    fd, path = tempfile.mkstemp(suffix="_silent_stub.py")
+    with os.fdopen(fd, "w") as f:
+        f.write(SILENT_STUB_SCRIPT)
+    yield path
+    os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_request_times_out_when_server_silent(silent_stub_path):
+    # Regression: a subprocess that stays alive but never responds to a
+    # request (no EOF, no crash) used to hang the caller forever — only
+    # initialize was time-bounded. The per-request timeout must fail it.
+    # No external asyncio.wait_for here on purpose: the client must bound
+    # the wait itself, otherwise this test would hang the whole suite.
+    client = MCPClient([sys.executable, silent_stub_path], request_timeout=1.0)
+    await client.start()
+    try:
+        with pytest.raises(MCPError, match="timed out"):
+            await client.call_tool("echo", {"text": "x"})
+    finally:
+        await client.close()
