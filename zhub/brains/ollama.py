@@ -62,7 +62,7 @@ class OllamaAdapter(BrainAdapter):
         if system:
             msgs.append({"role": "system", "content": system})
         msgs.extend(messages)
-        body = {
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": msgs,
             "stream": True,
@@ -71,6 +71,12 @@ class OllamaAdapter(BrainAdapter):
                 "num_predict": max_tokens,
             },
         }
+        # Ollama's /api/chat natively supports function calling via a top-level
+        # `tools` field. Forward them like every sibling adapter does — without
+        # this the model is never told the tools exist, so it can't emit a
+        # tool call and the hub's auto-resolution never fires (silent loss).
+        if tools:
+            body["tools"] = tools
         async with self._http.stream(
             "POST", f"{self.base_url}/api/chat", json=body,
         ) as response:
@@ -98,13 +104,39 @@ class OllamaAdapter(BrainAdapter):
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                content = (data.get("message") or {}).get("content", "")
+                message = data.get("message") or {}
+                content = message.get("content") or ""
                 done = bool(data.get("done"))
-                yield ChatChunk(
-                    delta=content,
-                    done=done,
-                    finish_reason=data.get("done_reason") if done else None,
-                    raw=data,
-                )
+                # Ollama returns tool calls in `message.tool_calls` as complete
+                # objects (name + a dict of arguments), not as OpenAI-style
+                # incremental deltas. Re-shape each into a tool_call_delta the
+                # hub understands: index, synthetic id, function name, and
+                # arguments serialized to a JSON string (the hub concatenates
+                # argument fragments, so it must be a str). Dropping these meant
+                # an Ollama-backed AI could never resolve a capability.
+                tool_calls = message.get("tool_calls") or []
+                for i, tc in enumerate(tool_calls):
+                    fn = tc.get("function") or {}
+                    args = fn.get("arguments")
+                    if not isinstance(args, str):
+                        args = json.dumps(args, ensure_ascii=False) if args else ""
+                    yield ChatChunk(
+                        delta="",
+                        done=False,
+                        tool_call_delta={
+                            "index": i,
+                            "id": tc.get("id") or f"call_{i}",
+                            "type": "function",
+                            "function": {"name": fn.get("name", ""), "arguments": args},
+                        },
+                        raw=data,
+                    )
                 if done:
+                    # Ollama reports done_reason="stop" even when the turn ended
+                    # in a tool call; the hub keys auto-resolution off
+                    # finish_reason == "tool_calls", so report that when calls
+                    # were present this turn.
+                    finish = "tool_calls" if tool_calls else (data.get("done_reason") or "stop")
+                    yield ChatChunk(delta=content, done=True, finish_reason=finish, raw=data)
                     return
+                yield ChatChunk(delta=content, done=False, raw=data)
