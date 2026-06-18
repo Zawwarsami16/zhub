@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import json
 import logging
+import re
 import sys
 from typing import Any, Optional
 
@@ -58,11 +59,24 @@ def _err(req_id: Any, code: int, message: str, data: Optional[Any] = None) -> st
 
 
 def _substitute(text: str, args: dict[str, Any]) -> str:
-    """Simple {var} placeholder substitution used by prompts/get."""
-    out = text
-    for k, v in (args or {}).items():
-        out = out.replace("{" + str(k) + "}", str(v))
-    return out
+    """Single-pass {var} placeholder substitution used by prompts/get.
+
+    Each declared placeholder is replaced exactly once over the original
+    template; substituted values are inserted verbatim and never re-scanned.
+    A naive replace-in-a-loop would expand a `{other}` that happens to appear
+    inside one argument's value into a *different* argument's value (and the
+    result would depend on argument order) — user-supplied argument values
+    must be treated as literal text, not as further templates. Unknown
+    placeholders are left intact.
+    """
+    args = args or {}
+    if not args:
+        return text
+    lookup = {"{" + str(k) + "}": str(v) for k, v in args.items()}
+    pattern = re.compile(
+        "|".join(re.escape(p) for p in sorted(lookup, key=len, reverse=True))
+    )
+    return pattern.sub(lambda m: lookup[m.group(0)], text)
 
 
 class ZhubMCPServer:
