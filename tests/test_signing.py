@@ -192,3 +192,84 @@ async def test_unsigned_publish_still_works(hub_port):
             break
         await asyncio.sleep(0.1)
     assert pub.api_key, "unsigned manifest should still register (backwards compat)"
+
+
+# --- key-pinning unit tests (direct Hub.register_publisher) -----------------
+# The public_key is served openly at /<name>/manifest.json, so pinning must
+# require a *valid signature* on re-registration, not just a matching
+# public_key. These drive the registration logic directly without a live hub.
+
+def _new_storage():
+    import os
+    import tempfile
+    from zhub.persistence import Storage
+    fd, db = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    return Storage(db)
+
+
+@pytest.mark.asyncio
+async def test_pinning_rejects_unsigned_reregister_with_copied_public_key():
+    """Stolen api_key + the (public) public_key, but no signature, must NOT
+    take over a signed registration."""
+    if not SERVER_AVAILABLE:
+        pytest.skip("fastapi/uvicorn not installed")
+    from zhub.server import Hub
+    hub = Hub(storage=_new_storage())
+    sk, pk = generate_keypair()
+    signed = sign_manifest(
+        {"name": "victim", "description": "real", "schema_version": "0.1", "capabilities": []}, sk
+    )
+    _, api_key = await hub.register_publisher("victim", signed, websocket=None)
+
+    forged = {"name": "victim", "description": "PWNED", "schema_version": "0.1",
+              "capabilities": [], "public_key": pk}  # copied public key, no signature
+    with pytest.raises(PermissionError, match="must be signed"):
+        await hub.register_publisher("victim", forged, websocket=None, desired_api_key=api_key)
+    assert hub.publishers["victim"].manifest["description"] == "real"
+
+
+@pytest.mark.asyncio
+async def test_pinning_rejects_reregister_signed_with_different_key():
+    """A validly-signed manifest under a *different* keypair must not take over
+    a registration pinned to the original key."""
+    if not SERVER_AVAILABLE:
+        pytest.skip("fastapi/uvicorn not installed")
+    from zhub.server import Hub
+    hub = Hub(storage=_new_storage())
+    sk, _pk = generate_keypair()
+    signed = sign_manifest(
+        {"name": "victim", "description": "real", "schema_version": "0.1", "capabilities": []}, sk
+    )
+    _, api_key = await hub.register_publisher("victim", signed, websocket=None)
+
+    attacker_sk, _ = generate_keypair()
+    other = sign_manifest(
+        {"name": "victim", "description": "PWNED", "schema_version": "0.1", "capabilities": []},
+        attacker_sk,
+    )
+    with pytest.raises(PermissionError, match="public_key does not match"):
+        await hub.register_publisher("victim", other, websocket=None, desired_api_key=api_key)
+    assert hub.publishers["victim"].manifest["description"] == "real"
+
+
+@pytest.mark.asyncio
+async def test_pinning_allows_legit_resigned_reregister():
+    """The genuine owner re-registers with their own freshly-signed manifest
+    (as the publish client does on every reconnect) and keeps the same key."""
+    if not SERVER_AVAILABLE:
+        pytest.skip("fastapi/uvicorn not installed")
+    from zhub.server import Hub
+    hub = Hub(storage=_new_storage())
+    sk, _pk = generate_keypair()
+    signed = sign_manifest(
+        {"name": "victim", "description": "v1", "schema_version": "0.1", "capabilities": []}, sk
+    )
+    _, api_key = await hub.register_publisher("victim", signed, websocket=None)
+
+    resigned = sign_manifest(
+        {"name": "victim", "description": "v2", "schema_version": "0.1", "capabilities": []}, sk
+    )
+    _, key2 = await hub.register_publisher("victim", resigned, websocket=None, desired_api_key=api_key)
+    assert key2 == api_key
+    assert hub.publishers["victim"].manifest["description"] == "v2"
