@@ -281,11 +281,22 @@ class Hub:
                 stored = self.storage.lookup_publisher(name)
                 if stored and stored["api_key_hash"] == hash_key(desired_api_key):
                     # Key pinning: if the stored manifest was signed, the
-                    # incoming manifest must present the same public_key
-                    # (otherwise a stolen api_key alone would let an attacker
-                    # take over the registration).
+                    # incoming manifest must prove ownership of the pinned key
+                    # with a valid signature — not merely echo back the
+                    # (publicly served) public_key. Otherwise a stolen api_key
+                    # alone suffices to take over: the public_key is readable by
+                    # anyone at /<name>/manifest.json, so an unsigned manifest
+                    # carrying a matching public_key would pass. Any signature
+                    # present has already been verified above against its
+                    # embedded public_key, so a matching public_key here proves
+                    # private-key ownership.
                     stored_pk = stored["manifest"].get("public_key")
                     if stored_pk:
+                        if not manifest.get("signature"):
+                            raise PermissionError(
+                                "key pinning: stored manifest is signed; "
+                                "re-registration must be signed with the pinned key"
+                            )
                         if manifest.get("public_key") != stored_pk:
                             raise PermissionError(
                                 "key pinning: stored public_key does not match"
