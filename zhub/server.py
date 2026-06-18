@@ -1442,15 +1442,19 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         args = body.get("args") or {}
         if not capability:
             raise HTTPException(400, "missing 'capability'")
-        # Validate args against the exposure's declared schema if present
-        schema = next(
-            (c.get("schema") for c in exp.manifest.get("capabilities", [])
+        # Validate args against the exposure's declared schema if present.
+        # Look up the capability itself first: a capability that exists but
+        # declares no schema (no-arg op) is valid and invokable — only a
+        # genuinely-missing capability is a 404.
+        cap = next(
+            (c for c in exp.manifest.get("capabilities", [])
              if c.get("name") == capability),
             None,
         )
-        if schema is None:
+        if cap is None:
             raise HTTPException(404,
                 f"exposure '{exposure_id}' does not expose '{capability}'")
+        schema = cap.get("schema")
         if isinstance(schema, dict):
             errs = validate_schema(args, schema)
             if errs:
@@ -1497,14 +1501,15 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             conn = hub.connections_by_ai.get(ai_name, {}).get(connection_id)
             if conn is None:
                 raise HTTPException(404, f"connection '{connection_id}' not found")
-            schema = next(
-                (c.get("schema") for c in conn.client_manifest.get("capabilities", [])
+            cap = next(
+                (c for c in conn.client_manifest.get("capabilities", [])
                  if c.get("name") == capability),
                 None,
             )
-            if schema is None:
+            if cap is None:
                 raise HTTPException(404,
                     f"connection '{connection_id}' does not expose '{capability}'")
+            schema = cap.get("schema")
         else:
             connection_id = hub.find_capability_connection(ai_name, capability)
             if connection_id is None:
