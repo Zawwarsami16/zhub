@@ -153,6 +153,80 @@ async def test_invoke_exposure_via_publisher_key(hub):
 
 
 @pytest.mark.asyncio
+async def test_invoke_schemaless_capability(hub):
+    """A no-arg capability that declares no schema (schema is None/absent —
+    the idiomatic shape for a non-Python publisher) must still be invokable.
+    Regression: the schema lookup conflated 'capability not found' with
+    'capability has no schema', 404-ing a legitimately-exposed capability."""
+    e = expose(
+        name="pinger",
+        capabilities={"ping": (None, lambda a: {"pong": True})},
+        hub_url=f"ws://127.0.0.1:{hub}",
+        public=True,
+    )
+    for _ in range(50):
+        if e.exposure_id:
+            break
+        await asyncio.sleep(0.1)
+
+    pub = publish(
+        name="ping-caller",
+        description="x",
+        chat_handler=lambda m, o: "ok",
+        hub_url=f"ws://127.0.0.1:{hub}",
+    )
+    for _ in range(50):
+        if pub.api_key:
+            break
+        await asyncio.sleep(0.1)
+
+    async with httpx.AsyncClient(timeout=5.0) as c:
+        resp = await c.post(
+            f"http://127.0.0.1:{hub}/exposures/{e.exposure_id}/invoke",
+            json={"capability": "ping", "args": {}},
+            headers={"Authorization": f"Bearer {pub.api_key}"},
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["result"] == {"pong": True}
+
+
+@pytest.mark.asyncio
+async def test_invoke_unknown_capability_on_known_exposure(hub):
+    """An exposure that exists but doesn't declare the requested capability
+    still 404s — the fix must not weaken the not-found guard."""
+    e = expose(
+        name="lonely",
+        capabilities={"real_cap": ({"type": "object"}, lambda a: {"ok": True})},
+        hub_url=f"ws://127.0.0.1:{hub}",
+        public=True,
+    )
+    for _ in range(50):
+        if e.exposure_id:
+            break
+        await asyncio.sleep(0.1)
+
+    pub = publish(
+        name="probe",
+        description="x",
+        chat_handler=lambda m, o: "ok",
+        hub_url=f"ws://127.0.0.1:{hub}",
+    )
+    for _ in range(50):
+        if pub.api_key:
+            break
+        await asyncio.sleep(0.1)
+
+    async with httpx.AsyncClient(timeout=5.0) as c:
+        r = await c.post(
+            f"http://127.0.0.1:{hub}/exposures/{e.exposure_id}/invoke",
+            json={"capability": "ghost_cap", "args": {}},
+            headers={"Authorization": f"Bearer {pub.api_key}"},
+        )
+    assert r.status_code == 404
+    assert "ghost_cap" in r.text
+
+
+@pytest.mark.asyncio
 async def test_invoke_rejects_without_publisher_key(hub):
     e = expose(
         name="x",
