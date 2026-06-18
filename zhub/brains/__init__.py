@@ -13,7 +13,7 @@ do.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, AsyncIterator, Optional
 
 from .base import BrainAdapter, ChatChunk
 from .ollama import OllamaAdapter
@@ -50,6 +50,39 @@ def detect() -> Optional[BrainAdapter]:
     return None
 
 
+async def stream_for_publish(
+    brain: BrainAdapter,
+    messages: list[dict[str, Any]],
+    *,
+    system: Optional[str] = None,
+    temperature: float = 0.7,
+    max_tokens: int = 2048,
+    tools: Optional[list[dict[str, Any]]] = None,
+) -> AsyncIterator[ChatChunk]:
+    """Stream a brain's reply as chunks suitable to yield from a zhub
+    ``chat_handler``.
+
+    Yields the *whole* ChatChunk whenever it carries a text delta, a
+    tool_call_delta, OR a finish_reason — not just ``chunk.delta``. A
+    tool-call turn produces chunks whose ``delta`` is empty but whose
+    ``tool_call_delta`` / ``finish_reason="tool_calls"`` carry the call;
+    yielding only ``chunk.delta`` (the obvious-looking shortcut) silently
+    drops every function call the brain emits, so the hub — which keys
+    tool-call auto-resolution off accumulated tool_call deltas + a
+    ``finish_reason == "tool_calls"`` terminator — never sees them. The
+    publisher serializers (`_serialize_stream_chunk` / `_chunk_fields`)
+    already understand ChatChunk objects, so handing them the chunk
+    verbatim preserves the full shape on both the streaming and
+    non-streaming paths.
+    """
+    async for chunk in brain.stream(
+        messages, system=system, temperature=temperature,
+        max_tokens=max_tokens, tools=tools,
+    ):
+        if chunk.delta or chunk.tool_call_delta or chunk.finish_reason:
+            yield chunk
+
+
 def list_available() -> list[BrainAdapter]:
     import zhub.brains as _self
     out: list[BrainAdapter] = []
@@ -62,7 +95,7 @@ def list_available() -> list[BrainAdapter]:
 
 __all__ = [
     "BrainAdapter", "ChatChunk", "REGISTRY",
-    "detect", "list_available",
+    "detect", "list_available", "stream_for_publish",
     "OllamaAdapter", "GroqAdapter", "OpenAIAdapter",
     "CerebrasAdapter", "AnthropicAdapter",
     "TogetherAdapter", "MistralAdapter", "CohereAdapter",

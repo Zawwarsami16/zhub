@@ -25,7 +25,7 @@ import os
 import sys
 
 from zhub import publish
-from zhub.brains import detect, list_available, REGISTRY
+from zhub.brains import detect, list_available, REGISTRY, stream_for_publish
 
 
 def _resolve_brain(name: str):
@@ -116,15 +116,15 @@ async def main() -> None:
                          if m.get("role") == "system"]
         non_system = [m for m in messages if m.get("role") != "system"]
         system = "\n\n".join(p for p in system_parts if p) or None
-        async for chunk in brain.stream(
+        async for chunk in stream_for_publish(
+            brain,
             non_system,
             system=system,
             temperature=float(options.get("temperature", 0.7)),
             max_tokens=int(options.get("max_tokens", 2048)),
             tools=options.get("tools"),
         ):
-            if chunk.delta:
-                yield chunk.delta
+            yield chunk
 
     pub = publish(
         name=args.name,
