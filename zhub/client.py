@@ -497,37 +497,50 @@ def connect(
     )
 
     async def _serve_one_session(url: str) -> None:
-        async with websockets.connect(url, max_size=10_000_000) as ws:
-            conn._ws = ws
-            await ws.send(register_connection(ai_name, api_key, cm.to_dict()).to_json())
+        try:
+            async with websockets.connect(url, max_size=10_000_000) as ws:
+                conn._ws = ws
+                await ws.send(register_connection(ai_name, api_key, cm.to_dict()).to_json())
 
-            async for raw in ws:
-                env = Envelope.from_json(raw)
+                async for raw in ws:
+                    env = Envelope.from_json(raw)
 
-                if env.type == "registered":
-                    log.info("client registered to %s", ai_name)
+                    if env.type == "registered":
+                        log.info("client registered to %s", ai_name)
 
-                elif env.type == "chat-response":
-                    fut = conn._pending.get(env.request_id)
-                    if fut and not fut.done():
-                        fut.set_result(env.payload)
-                    queue = conn._streams.get(env.request_id)
-                    if queue is not None:
-                        await queue.put({"delta": env.payload.get("text", ""), "done": False})
-                        await queue.put({"done": True})
+                    elif env.type == "chat-response":
+                        fut = conn._pending.get(env.request_id)
+                        if fut and not fut.done():
+                            fut.set_result(env.payload)
+                        queue = conn._streams.get(env.request_id)
+                        if queue is not None:
+                            await queue.put({"delta": env.payload.get("text", ""), "done": False})
+                            await queue.put({"done": True})
 
-                elif env.type == "chat-chunk":
-                    queue = conn._streams.get(env.request_id)
-                    if queue is not None:
-                        await queue.put(env.payload)
+                    elif env.type == "chat-chunk":
+                        queue = conn._streams.get(env.request_id)
+                        if queue is not None:
+                            await queue.put(env.payload)
 
-                elif env.type == "invoke-request":
-                    asyncio.create_task(_handle_invoke(conn, ws, env))
+                    elif env.type == "invoke-request":
+                        asyncio.create_task(_handle_invoke(conn, ws, env))
 
-                elif env.type == "error":
-                    log.warning("hub error: %s", env.payload)
-                    if env.payload.get("code") == "register_failed":
-                        raise AuthError(env.payload.get("message", "register failed"))
+                    elif env.type == "error":
+                        log.warning("hub error: %s", env.payload)
+                        if env.payload.get("code") == "register_failed":
+                            raise AuthError(env.payload.get("message", "register failed"))
+        finally:
+            # Fail any in-flight chat() calls so callers get an immediate error
+            # instead of hanging until their 60s timeout when the WS drops.
+            err = ZhubConnectionError("connection closed")
+            for fut in list(conn._pending.values()):
+                if not fut.done():
+                    fut.set_exception(err)
+            conn._pending.clear()
+            for q in list(conn._streams.values()):
+                await q.put({"done": True, "error": "connection closed"})
+            conn._streams.clear()
+            conn._ws = None
 
     async def runner() -> None:
         url = _to_ws_url(hub_url, "/ws/connect")
