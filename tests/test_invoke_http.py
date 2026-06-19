@@ -89,7 +89,12 @@ async def test_invoke_capability_via_http(invoke_hub_port):
         hub_url=hub_ws,
         capabilities={"get_battery": ({"type": "object"}, get_battery)},
     )
-    await asyncio.sleep(0.6)
+    # poll until the publisher sees the connection-event carrying the capability
+    for _ in range(60):
+        if pub.find_capability("get_battery") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("get_battery") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.post(
