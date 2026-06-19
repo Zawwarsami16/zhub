@@ -7,7 +7,6 @@ all results.
 """
 
 import asyncio
-import json
 import socket
 import threading
 import time
@@ -56,13 +55,20 @@ def parallel_hub_port():
 
 @pytest.mark.asyncio
 async def test_parallel_tool_calls_resolved_concurrently(parallel_hub_port):
-    """Publisher emits two tool_calls in one response. Each capability
-    handler sleeps 0.5s. If serialized, total > 1s; concurrent < 0.8s.
-    Both results should appear in the audit log keyed to their
-    tool_call_id, and the final message should mention both."""
+    """Publisher emits two tool_calls in one response. The hub must invoke
+    both capabilities concurrently, not serially.
+
+    Concurrency is verified by recording when each handler starts: if
+    slow_a and slow_b both start within 0.4s of each other they were
+    running as overlapping asyncio tasks (the serial case would have a
+    gap equal to the first handler's full sleep, ~0.5s). Wall-clock
+    total time is not used — it is too sensitive to scheduler noise on
+    shared VPS runners.
+    """
     hub_ws = f"ws://127.0.0.1:{parallel_hub_port}"
     hub_http = f"http://127.0.0.1:{parallel_hub_port}"
     call_n = {"n": 0}
+    starts: dict[str, float] = {}
 
     def chat_handler(messages, options):
         call_n["n"] += 1
@@ -85,11 +91,13 @@ async def test_parallel_tool_calls_resolved_concurrently(parallel_hub_port):
         return f"both done: {sorted(names)}"
 
     async def slow_a(_args):
-        await asyncio.sleep(0.8)
+        starts["a"] = time.monotonic()
+        await asyncio.sleep(0.5)
         return {"from": "a"}
 
     async def slow_b(_args):
-        await asyncio.sleep(0.8)
+        starts["b"] = time.monotonic()
+        await asyncio.sleep(0.5)
         return {"from": "b"}
 
     pub = publish(
@@ -115,7 +123,7 @@ async def test_parallel_tool_calls_resolved_concurrently(parallel_hub_port):
     await asyncio.sleep(0.8)
 
     t0 = time.monotonic()
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(
             f"{hub_http}/{pub.name}/v1/chat/completions",
             json={"messages": [{"role": "user", "content": "go"}]},
@@ -130,10 +138,15 @@ async def test_parallel_tool_calls_resolved_concurrently(parallel_hub_port):
     audit = body["usage"]["tool_results"]
     assert {a["name"] for a in audit} == {"slow_a", "slow_b"}
     assert {a["tool_call_id"] for a in audit} == {"call_a", "call_b"}
-    # Two 0.8s sleeps. Serial = 1.6s + overhead. Parallel = 0.8s + overhead.
-    # We want a threshold that still distinguishes parallel from serial
-    # but tolerates slow CI. Serial would clock north of 1.6 + N×scheduler
-    # overhead; parallel below ~1s under normal conditions, but can drift
-    # to 1.4–1.7s on heavily-shared runners. Use 1.9s — a serial impl
-    # would be even higher (~2.1s+ once the second 0.8s sleep adds up).
-    assert elapsed < 1.9, f"parallel resolution should finish under 1.9s; took {elapsed:.2f}s"
+
+    # Verify concurrency: both handlers must have run, and must have started
+    # within 0.4s of each other. Serial execution would have a gap >= the
+    # first handler's sleep (0.5s); concurrent execution has a gap of ~0ms.
+    assert "a" in starts and "b" in starts, "both capability handlers must have been invoked"
+    start_gap = abs(starts["a"] - starts["b"])
+    assert start_gap < 0.4, (
+        f"handlers started {start_gap:.3f}s apart — "
+        f"hub likely invoked them serially (gap must be < first sleep = 0.5s)"
+    )
+    # Loose wall-clock bound: catch hangs, not timing noise.
+    assert elapsed < 8.0, f"request took {elapsed:.2f}s — something appears hung"
