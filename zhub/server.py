@@ -335,13 +335,27 @@ class Hub:
 
     async def unregister_publisher(self, name: str) -> None:
         async with self.lock:
-            self.publishers.pop(name, None)
+            publisher = self.publishers.pop(name, None)
             for k, v in list(self.api_keys.items()):
                 if v == name:
                     self.api_keys.pop(k, None)
             self.connections_by_ai.pop(name, None)
             self._rate_windows.pop(name, None)
-            log.info("publisher unregistered: %s", name)
+        if publisher is not None:
+            # Fail/terminate any in-flight proxy_chat() calls immediately on
+            # disconnect rather than waiting for their full timeout:
+            #   - non-streaming futures: raise LookupError to the HTTP handler
+            #   - streaming queues: put None (the existing stream-end sentinel)
+            #     so the SSE event_stream loop exits instead of blocking forever
+            err = LookupError("publisher disconnected")
+            for item in list(publisher.pending.values()):
+                if isinstance(item, asyncio.Future):
+                    if not item.done():
+                        item.set_exception(err)
+                elif isinstance(item, asyncio.Queue):
+                    item.put_nowait(None)
+            publisher.pending.clear()
+        log.info("publisher unregistered: %s", name)
 
     def lookup_by_api_key(self, api_key: str) -> Optional[str]:
         return self.api_keys.get(api_key)
@@ -392,12 +406,20 @@ class Hub:
 
     async def unregister_connection(self, ai_name: str, connection_id: str) -> None:
         async with self.lock:
-            self.connections_by_ai.get(ai_name, {}).pop(connection_id, None)
+            conn = self.connections_by_ai.get(ai_name, {}).pop(connection_id, None)
         if ai_name in self.publishers:
             await self._send_to_publisher(
                 ai_name,
                 connection_event("disconnected", connection_id, None),
             )
+        if conn is not None:
+            # Fail any in-flight invoke_capability() calls immediately on
+            # client disconnect instead of hanging for the full 60-second timeout.
+            err = LookupError("connection disconnected")
+            for fut in list(conn.pending.values()):
+                if not fut.done():
+                    fut.set_exception(err)
+            conn.pending.clear()
         log.info("connection unregistered: %s", connection_id)
 
     # exposures (Phase 7.0) --------------------------------------------
