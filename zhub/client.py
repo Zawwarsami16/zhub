@@ -434,6 +434,8 @@ class ZhubConnection:
                    model: str = "default", temperature: float = 0.4,
                    max_tokens: int = 4096, timeout: float = 60.0) -> dict[str, Any]:
         """Send a chat request through the hub to the AI."""
+        if not self._ws:
+            raise ZhubConnectionError("not connected to hub")
         env = chat_request(messages, model, temperature, max_tokens)
         future = asyncio.get_running_loop().create_future()
         self._pending[env.request_id] = future
@@ -452,6 +454,8 @@ class ZhubConnection:
             async for chunk in conn.chat_stream(messages=[...]):
                 print(chunk, end="", flush=True)
         """
+        if not self._ws:
+            raise ZhubConnectionError("not connected to hub")
         env = chat_request(messages, model, temperature, max_tokens,
                            extras={"stream": True})
         queue: asyncio.Queue = asyncio.Queue()

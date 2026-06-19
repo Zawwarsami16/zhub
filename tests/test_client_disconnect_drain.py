@@ -96,3 +96,23 @@ async def test_ws_is_none_after_cleanup():
     conn._ws = object()  # type: ignore[assignment]
     _run_disconnect_cleanup(conn)
     assert conn._ws is None
+
+
+@pytest.mark.asyncio
+async def test_chat_raises_when_not_connected():
+    """chat() called before WS is established must raise ZhubConnectionError,
+    not AttributeError from _ws.send() on None."""
+    conn = _make_conn()
+    assert conn._ws is None
+    with pytest.raises(ZhubConnectionError):
+        await conn.chat(messages=[{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_raises_when_not_connected():
+    """chat_stream() called before WS is established must raise ZhubConnectionError."""
+    conn = _make_conn()
+    assert conn._ws is None
+    with pytest.raises(ZhubConnectionError):
+        async for _ in conn.chat_stream(messages=[{"role": "user", "content": "hi"}]):
+            pass
