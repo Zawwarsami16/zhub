@@ -164,61 +164,71 @@ def publish(
     async def _serve_one_session(url: str) -> None:
         """Open one WebSocket session, register, serve until disconnect.
         On disconnect, returns normally (the outer loop reconnects)."""
-        async with websockets.connect(url, max_size=10_000_000) as ws:
-            pub._ws = ws  # type: ignore[attr-defined]
-            manifest_dict = manifest.to_dict()
-            if private_key:
-                from .signing import sign_manifest as _sign
-                manifest_dict = _sign(manifest_dict, private_key)
-            register_env = register_publisher(manifest_dict, name)
-            # Use the api_key from the prior registration if we already have
-            # one (re-register on the same name via key pinning); fall back
-            # to the operator-supplied api_key on first connect.
-            register_key = pub.api_key or api_key
-            if register_key:
-                register_env.payload["api_key"] = register_key
-            await ws.send(register_env.to_json())
+        try:
+            async with websockets.connect(url, max_size=10_000_000) as ws:
+                pub._ws = ws  # type: ignore[attr-defined]
+                manifest_dict = manifest.to_dict()
+                if private_key:
+                    from .signing import sign_manifest as _sign
+                    manifest_dict = _sign(manifest_dict, private_key)
+                register_env = register_publisher(manifest_dict, name)
+                # Use the api_key from the prior registration if we already have
+                # one (re-register on the same name via key pinning); fall back
+                # to the operator-supplied api_key on first connect.
+                register_key = pub.api_key or api_key
+                if register_key:
+                    register_env.payload["api_key"] = register_key
+                await ws.send(register_env.to_json())
 
-            async for raw in ws:
-                env = Envelope.from_json(raw)
+                async for raw in ws:
+                    env = Envelope.from_json(raw)
 
-                if env.type == "registered":
-                    pub.name = env.payload.get("name", name)
-                    pub.base_url = env.payload.get("base_url", "")
-                    # Hub returns the same key on re-registration; only set
-                    # if non-empty so a transient empty value doesn't clear it.
-                    new_key = env.payload.get("api_key", "")
-                    if new_key:
-                        pub.api_key = new_key
-                    log.info("publisher registered as %s with key %s",
-                             pub.name, pub.api_key[:10] + "…")
+                    if env.type == "registered":
+                        pub.name = env.payload.get("name", name)
+                        pub.base_url = env.payload.get("base_url", "")
+                        # Hub returns the same key on re-registration; only set
+                        # if non-empty so a transient empty value doesn't clear it.
+                        new_key = env.payload.get("api_key", "")
+                        if new_key:
+                            pub.api_key = new_key
+                        log.info("publisher registered as %s with key %s",
+                                 pub.name, pub.api_key[:10] + "…")
 
-                elif env.type == "chat-request":
-                    asyncio.create_task(_handle_chat(pub, ws, env))
+                    elif env.type == "chat-request":
+                        asyncio.create_task(_handle_chat(pub, ws, env))
 
-                elif env.type == "invoke-result":
-                    fut = pub._pending.get(env.request_id)  # type: ignore[attr-defined]
-                    if fut and not fut.done():
-                        fut.set_result(env.payload)
+                    elif env.type == "invoke-result":
+                        fut = pub._pending.get(env.request_id)  # type: ignore[attr-defined]
+                        if fut and not fut.done():
+                            fut.set_result(env.payload)
 
-                elif env.type == "connection-event":
-                    kind = env.payload.get("kind", "?")
-                    cid = env.payload.get("connection_id", "")
-                    cm = env.payload.get("client_manifest")
-                    if kind == "connected":
-                        pub._connections[cid] = {"client_manifest": cm}
-                    elif kind == "disconnected":
-                        pub._connections.pop(cid, None)
-                    elif kind == "updated":
-                        pub._connections[cid] = {"client_manifest": cm}
-                    if on_connection_event:
-                        on_connection_event(kind, cid, cm)
+                    elif env.type == "connection-event":
+                        kind = env.payload.get("kind", "?")
+                        cid = env.payload.get("connection_id", "")
+                        cm = env.payload.get("client_manifest")
+                        if kind == "connected":
+                            pub._connections[cid] = {"client_manifest": cm}
+                        elif kind == "disconnected":
+                            pub._connections.pop(cid, None)
+                        elif kind == "updated":
+                            pub._connections[cid] = {"client_manifest": cm}
+                        if on_connection_event:
+                            on_connection_event(kind, cid, cm)
 
-                elif env.type == "error":
-                    log.warning("hub error: %s", env.payload)
-                    # Auth/registration failures are terminal — don't loop.
-                    if env.payload.get("code") == "register_failed":
-                        raise AuthError(env.payload.get("message", "register failed"))
+                    elif env.type == "error":
+                        log.warning("hub error: %s", env.payload)
+                        # Auth/registration failures are terminal — don't loop.
+                        if env.payload.get("code") == "register_failed":
+                            raise AuthError(env.payload.get("message", "register failed"))
+        finally:
+            # Fail any in-flight invoke() calls so they raise immediately on
+            # disconnect instead of hanging for their full timeout.
+            err = ZhubConnectionError("connection closed")
+            for fut in list(pub._pending.values()):  # type: ignore[attr-defined]
+                if not fut.done():
+                    fut.set_exception(err)
+            pub._pending.clear()  # type: ignore[attr-defined]
+            pub._ws = None  # type: ignore[attr-defined]
 
     async def runner() -> None:
         url = _to_ws_url(hub_url, "/ws/publish")
