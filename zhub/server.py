@@ -448,10 +448,18 @@ class Hub:
 
     async def unregister_exposure(self, exposure_id: str) -> None:
         async with self.lock:
-            self.exposures.pop(exposure_id, None)
+            exp = self.exposures.pop(exposure_id, None)
             for k, v in list(self.device_keys.items()):
                 if v == exposure_id:
                     self.device_keys.pop(k, None)
+        if exp is not None:
+            # Fail any in-flight invoke_exposure() calls so callers raise
+            # immediately on device disconnect instead of hanging for 60 s.
+            err = LookupError("exposure disconnected")
+            for fut in list(exp.pending.values()):
+                if not fut.done():
+                    fut.set_exception(err)
+            exp.pending.clear()
         log.info("exposure unregistered: %s", exposure_id)
 
     def find_exposure_by_capability(self, capability_name: str) -> Optional[str]:
