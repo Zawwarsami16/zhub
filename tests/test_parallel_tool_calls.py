@@ -120,7 +120,10 @@ async def test_parallel_tool_calls_resolved_concurrently(parallel_hub_port):
             "slow_b": ({"type": "object"}, slow_b),
         },
     )
-    await asyncio.sleep(0.8)
+    for _ in range(60):
+        if conn._ws is not None:
+            break
+        await asyncio.sleep(0.05)
 
     t0 = time.monotonic()
     async with httpx.AsyncClient(timeout=15.0) as client:

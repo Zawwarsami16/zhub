@@ -5,7 +5,6 @@ Skipped if fastapi/uvicorn isn't installed (the server module needs them).
 """
 
 import asyncio
-import os
 import socket
 import threading
 import time
@@ -88,7 +87,10 @@ async def test_publish_and_chat(hub_port):
         hub_url=hub,
         capabilities={},  # no capabilities exposed
     )
-    await asyncio.sleep(0.5)
+    for _ in range(50):
+        if conn._ws is not None:
+            break
+        await asyncio.sleep(0.05)
 
     resp = await conn.chat(messages=[{"role": "user", "content": "hello"}])
     assert "got: hello" in resp.get("text", "")
@@ -117,7 +119,7 @@ async def test_invoke_capability(hub_port):
             break
         await asyncio.sleep(0.1)
 
-    conn = connect(
+    connect(
         ai_name=pub.name,
         api_key=pub.api_key,
         hub_url=hub,
@@ -125,10 +127,15 @@ async def test_invoke_capability(hub_port):
             "test_op": ({"type": "object"}, fake_capability),
         },
     )
-    # wait for the connection-event to propagate
-    await asyncio.sleep(0.8)
+    # poll until the publisher receives the connection-event carrying the
+    # capability (WS up + hub round-trip + publisher WS message processed)
+    cid = None
+    for _ in range(60):
+        cid = pub.find_capability("test_op")
+        if cid is not None:
+            break
+        await asyncio.sleep(0.05)
 
-    cid = pub.find_capability("test_op")
     assert cid is not None, "publisher never saw the capability"
 
     result = await pub.invoke(cid, "test_op", {"hello": "world"})
