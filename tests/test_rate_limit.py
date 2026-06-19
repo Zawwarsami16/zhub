@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+from zhub import publish
 from zhub.ratelimit import parse_rate, SlidingWindow
 
 
@@ -100,7 +101,6 @@ def test_parse_zero_rate_then_check_is_safe():
 
 try:
     from zhub.server import Hub, PublisherRegistration
-    import dataclasses as _dc
     HUB_AVAILABLE = True
 except ImportError:
     HUB_AVAILABLE = False
@@ -180,7 +180,6 @@ except ImportError:
 
 if SERVER_AVAILABLE:
     from zhub.server import create_app
-from zhub import publish
 
 
 def _free_port() -> int:
@@ -211,8 +210,13 @@ def hub_port():
 
 @pytest.mark.asyncio
 async def test_rate_limit_429_after_quota(hub_port):
-    """Publisher with 3/s rate limit. Hit chat endpoint 4x rapidly. First 3
-    succeed; 4th returns 429 with Retry-After header + body."""
+    """Publisher with 3/min rate limit. Hit chat endpoint 4x in quick succession.
+    First 3 succeed; 4th returns 429 with Retry-After header + body.
+
+    Uses /min (not /s) so the sliding window (60s) isn't sensitive to the
+    wall-clock speed of the test runner — all 4 requests complete in well under
+    a second, so the first request is never evicted from the window.
+    """
     if not SERVER_AVAILABLE:
         pytest.skip()
 
@@ -221,7 +225,7 @@ async def test_rate_limit_429_after_quota(hub_port):
         description="rate limit test",
         chat_handler=lambda m, o: "ok",
         hub_url=f"ws://127.0.0.1:{hub_port}",
-        rate_limit="3/s",
+        rate_limit="3/min",
     )
     for _ in range(50):
         if pub.api_key:

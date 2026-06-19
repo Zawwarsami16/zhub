@@ -105,7 +105,7 @@ async def test_publisher_with_explicit_fake_brain(hub_port, tmp_path):
     )
 
     api_key = None
-    deadline = time.time() + 15.0
+    deadline = time.time() + 25.0
     try:
         while time.time() < deadline:
             line = await asyncio.wait_for(proc.stdout.readline(), timeout=4.0)

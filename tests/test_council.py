@@ -81,7 +81,10 @@ async def test_coordinator_calls_all_panel_members(hub_port):
                 ai_name=name, api_key=key, hub_url=hub_url,
                 capabilities={},
             )
-            await asyncio.sleep(0.1)
+            for _ in range(50):
+                if sub._ws is not None:
+                    break
+                await asyncio.sleep(0.05)
             r = await sub.chat(messages=[{"role": "user", "content": question}])
             replies.append(r.get("text", ""))
         return "council: " + " | ".join(replies)
@@ -103,7 +106,10 @@ async def test_coordinator_calls_all_panel_members(hub_port):
         ai_name=coord.name, api_key=coord.api_key, hub_url=hub_url,
         capabilities={},
     )
-    await asyncio.sleep(0.4)
+    for _ in range(50):
+        if client._ws is not None:
+            break
+        await asyncio.sleep(0.05)
 
     resp = await asyncio.wait_for(
         client.chat(messages=[{"role": "user", "content": "ping"}]),
