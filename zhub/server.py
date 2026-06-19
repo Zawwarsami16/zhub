@@ -340,6 +340,7 @@ class Hub:
                 if v == name:
                     self.api_keys.pop(k, None)
             self.connections_by_ai.pop(name, None)
+            self._rate_windows.pop(name, None)
             log.info("publisher unregistered: %s", name)
 
     def lookup_by_api_key(self, api_key: str) -> Optional[str]:
