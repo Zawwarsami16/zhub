@@ -112,6 +112,12 @@ class ZhubPublication:
         if self._task:
             self._task.cancel()
 
+    async def run_forever(self) -> None:
+        """Block until stop() is called. Useful as the final await in an
+        async main:  asyncio.run(main())  where main() ends with
+        ``await pub.run_forever()``."""
+        await self._stop_event.wait()
+
 
 def publish(
     name: str,
@@ -129,7 +135,11 @@ def publish(
     resources: Optional[list[dict[str, Any]]] = None,
     prompts: Optional[list[dict[str, Any]]] = None,
 ) -> ZhubPublication:
-    """Create a ZhubPublication. Call .run_forever() to actually start serving.
+    """Create a ZhubPublication and start the background reconnect loop.
+
+    In an async context the task runs immediately; call ``await pub.run_forever()``
+    to block until stop() is called.  In a script: ``asyncio.run(main())``
+    where ``main()`` ends with ``await pub.run_forever()``.
 
     If `api_key` is supplied AND the hub has a stored publisher with the
     same name and matching key hash, this is a re-registration after a hub
@@ -481,6 +491,16 @@ class ZhubConnection:
         finally:
             self._streams.pop(env.request_id, None)
 
+    async def stop(self) -> None:
+        """Stop the connection loop and cancel the background task."""
+        self._stop_event.set()
+        if self._task:
+            self._task.cancel()
+
+    async def run_forever(self) -> None:
+        """Block until stop() is called."""
+        await self._stop_event.wait()
+
 
 def connect(
     ai_name: str,
@@ -615,6 +635,16 @@ class ZhubExposure:
     _task: Optional[asyncio.Task] = None
     _ws: Any = None
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def stop(self) -> None:
+        """Stop the exposure loop and cancel the background task."""
+        self._stop_event.set()
+        if self._task:
+            self._task.cancel()
+
+    async def run_forever(self) -> None:
+        """Block until stop() is called."""
+        await self._stop_event.wait()
 
 
 def expose(

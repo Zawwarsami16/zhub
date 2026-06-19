@@ -18,27 +18,35 @@ Two modes:
 Quickstart:
 
     # Inside your AI
+    import asyncio
     from zhub import publish
 
-    pub = publish(
-        name="my-ai",
-        description="A custom AI agent",
-        hub_url="https://hub.example.com",
-        chat_handler=lambda messages: "...",
-    )
-    pub.run_forever()
+    async def main():
+        pub = publish(
+            name="my-ai",
+            description="A custom AI agent",
+            hub_url="https://hub.example.com",
+            chat_handler=lambda messages: "...",
+        )
+        await pub.run_forever()
+
+    asyncio.run(main())
 
     # Inside your client (e.g., a generic device)
+    import asyncio
     from zhub import connect
 
-    conn = connect(
-        endpoint="https://hub.example.com/my-ai",
-        api_key="zk_...",
-        capabilities={
-            "send_whatsapp": (schema, handler),
-        },
-    )
-    conn.run_forever()
+    async def main():
+        conn = connect(
+            endpoint="https://hub.example.com/my-ai",
+            api_key="zk_...",
+            capabilities={
+                "send_whatsapp": (schema, handler),
+            },
+        )
+        await conn.run_forever()
+
+    asyncio.run(main())
 """
 
 from .client import (
