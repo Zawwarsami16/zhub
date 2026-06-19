@@ -177,7 +177,11 @@ async def test_auto_mode_resolves_and_continues_stream(hub):
         hub_url=f"ws://127.0.0.1:{hub}",
         capabilities={"auto_thing": ({"type": "object"}, thing_handler)},
     )
-    await asyncio.sleep(0.6)
+    for _ in range(60):
+        if pub.find_capability("auto_thing") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("auto_thing") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=10.0) as c:
         resp = await c.post(
@@ -323,7 +327,11 @@ async def test_auto_mode_resolves_combined_tool_call_done_chunk(hub):
         hub_url=f"ws://127.0.0.1:{hub}",
         capabilities={"auto_combined": ({"type": "object"}, thing_handler)},
     )
-    await asyncio.sleep(0.6)
+    for _ in range(60):
+        if pub.find_capability("auto_combined") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("auto_combined") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=10.0) as c:
         resp = await c.post(
@@ -383,7 +391,11 @@ async def test_pre_resolve_mode_still_works(hub):
         hub_url=f"ws://127.0.0.1:{hub}",
         capabilities={"pre_thing": ({"type": "object"}, lambda a: {"ok": True})},
     )
-    await asyncio.sleep(0.6)
+    for _ in range(60):
+        if pub.find_capability("pre_thing") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("pre_thing") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=8.0) as c:
         resp = await c.post(

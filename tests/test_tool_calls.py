@@ -116,9 +116,11 @@ async def test_tool_call_auto_resolved(tool_hub_port):
             ),
         },
     )
-    # wait for connection-event to propagate so the publisher sees the cap
-    await asyncio.sleep(0.8)
-    assert pub.find_capability("send_whatsapp") is not None
+    for _ in range(60):
+        if pub.find_capability("send_whatsapp") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("send_whatsapp") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
@@ -187,7 +189,11 @@ async def test_tool_call_pass_through_with_header(tool_hub_port):
         hub_url=hub_ws,
         capabilities={"do_thing": ({"type": "object"}, thing_handler)},
     )
-    await asyncio.sleep(0.8)
+    for _ in range(60):
+        if pub.find_capability("do_thing") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("do_thing") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.post(

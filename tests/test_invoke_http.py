@@ -126,14 +126,6 @@ async def test_invoke_rejects_bad_api_key(invoke_hub_port):
             break
         await asyncio.sleep(0.1)
 
-    conn = connect(
-        ai_name=pub.name,
-        api_key=pub.api_key,
-        hub_url=hub_ws,
-        capabilities={"x": ({"type": "object"}, lambda a: 1)},
-    )
-    await asyncio.sleep(0.5)
-
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.post(
             f"{hub_http}/{pub.name}/v1/invoke",

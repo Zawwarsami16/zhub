@@ -77,7 +77,11 @@ async def test_streaming_publisher_yields_chunks(hub_port_streaming):
         hub_url=hub,
         capabilities={},
     )
-    await asyncio.sleep(0.5)
+    for _ in range(60):
+        if conn._ws is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert conn._ws is not None, "connection never established"
 
     chunks = []
     async for chunk in conn.chat_stream(messages=[{"role": "user", "content": "hi"}]):

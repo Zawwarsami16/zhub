@@ -125,7 +125,11 @@ async def test_stream_with_preresolve_header_runs_tool_calls(stream_hub_port):
         ai_name=pub.name, api_key=pub.api_key, hub_url=hub_ws,
         capabilities={"do_thing": ({"type": "object"}, thing_handler)},
     )
-    await asyncio.sleep(0.6)
+    for _ in range(60):
+        if pub.find_capability("do_thing") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("do_thing") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(

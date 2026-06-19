@@ -111,7 +111,11 @@ async def test_missing_required_field_short_circuits_invoke(val_hub_port):
             ),
         },
     )
-    await asyncio.sleep(0.6)
+    for _ in range(60):
+        if pub.find_capability("weather_lookup") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("weather_lookup") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.post(
@@ -184,7 +188,11 @@ async def test_wrong_type_short_circuits_invoke(val_hub_port):
             ),
         },
     )
-    await asyncio.sleep(0.6)
+    for _ in range(60):
+        if pub.find_capability("weather_t") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("weather_t") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.post(
@@ -253,7 +261,11 @@ async def test_valid_args_pass_through_to_handler(val_hub_port):
             ),
         },
     )
-    await asyncio.sleep(0.6)
+    for _ in range(60):
+        if pub.find_capability("weather_ok") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("weather_ok") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.post(

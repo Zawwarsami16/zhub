@@ -91,7 +91,11 @@ async def test_connected_capabilities_injected_as_tools(cap_hub_port):
         hub_url=hub_ws,
         capabilities={"weather_lookup": (schema, lambda a: {"temp": 22})},
     )
-    await asyncio.sleep(0.8)
+    for _ in range(60):
+        if pub.find_capability("weather_lookup") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("weather_lookup") is not None, "connection never established"
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.post(
@@ -140,7 +144,11 @@ async def test_client_supplied_tools_merged_with_injected(cap_hub_port):
         hub_url=hub_ws,
         capabilities={"local_thing": ({"type": "object"}, lambda a: 1)},
     )
-    await asyncio.sleep(0.8)
+    for _ in range(60):
+        if pub.find_capability("local_thing") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("local_thing") is not None, "connection never established"
 
     user_tool = {
         "type": "function",

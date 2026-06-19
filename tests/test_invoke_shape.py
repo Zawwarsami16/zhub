@@ -78,7 +78,11 @@ async def test_invoke_result_is_single_wrapped(hub_port):
         hub_url=hub_url,
         capabilities={"send": ({"type": "object"}, cap_handler)},
     )
-    await asyncio.sleep(0.6)
+    for _ in range(60):
+        if pub.find_capability("send") is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert pub.find_capability("send") is not None, "connection never established"
 
     cid = pub.find_capability("send")
     assert cid is not None

@@ -77,7 +77,11 @@ async def test_generator_handler_serves_nonstreaming_callers(hub_port):
         hub_url=hub_url,
         capabilities={},
     )
-    await asyncio.sleep(0.5)
+    for _ in range(60):
+        if conn._ws is not None:
+            break
+        await asyncio.sleep(0.1)
+    assert conn._ws is not None, "connection never established"
 
     # Non-streaming chat — must complete (not time out) and return concatenated text
     resp = await asyncio.wait_for(
