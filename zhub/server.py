@@ -1220,11 +1220,12 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
 
         target = peer_url.rstrip("/") + f"/{ai_name}/v1/chat/completions"
         chain_str = ",".join(forwarded_by_chain)
-        headers = {
-            "Authorization": f"Bearer {api_key}" if api_key else "",
+        headers: dict[str, str] = {
             "X-Zhub-Forwarded-By": chain_str,
             "Content-Type": "application/json",
         }
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         # Phase 17.0: sign the chain so the receiving hub can verify the
         # request really originated where it claims. Best-effort —
         # silently skipped if crypto isn't installed (recipient sees no
