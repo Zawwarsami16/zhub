@@ -2035,11 +2035,25 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                     if publisher and env.request_id in publisher.pending:
                         target = publisher.pending[env.request_id]
                         if isinstance(target, asyncio.Queue):
-                            # streaming caller — convert non-streaming response to single chunk
-                            await target.put({"delta": env.payload.get("text", ""),
-                                              "done": False})
-                            await target.put({"done": True,
-                                              "finish_reason": env.payload.get("finish_reason", "stop")})
+                            # streaming caller — non-streaming publisher. Forward tool_calls as
+                            # individual tool_call_delta chunks so the SSE event_stream accumulator
+                            # can drive auto-resolution: finish_reason=="tool_calls" alone (without
+                            # tcd entries in accumulated_tool_calls) never fires the resolve branch,
+                            # and the client sees finish_reason="tool_calls" with no callable functions.
+                            text = env.payload.get("text", "")
+                            tool_calls = env.payload.get("tool_calls") or []
+                            finish_reason = env.payload.get("finish_reason", "stop")
+                            if text:
+                                await target.put({"delta": text, "done": False})
+                            for idx, tc in enumerate(tool_calls):
+                                tcd = {
+                                    "index": idx,
+                                    "id": tc.get("id"),
+                                    "type": tc.get("type", "function"),
+                                    "function": tc.get("function") or {},
+                                }
+                                await target.put({"tool_call_delta": tcd, "done": False})
+                            await target.put({"done": True, "finish_reason": finish_reason})
                             await target.put(None)
                         else:
                             target.set_result(env.payload)
