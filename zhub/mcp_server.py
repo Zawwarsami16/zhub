@@ -198,8 +198,9 @@ class ZhubMCPServer:
             return None, f"unknown prompt: {name}"
         # Required-arg check
         for arg in prompt.get("arguments") or []:
-            if arg.get("required") and arg["name"] not in arguments:
-                return None, f"missing required argument: {arg['name']}"
+            arg_name = arg.get("name")
+            if arg.get("required") and arg_name and arg_name not in arguments:
+                return None, f"missing required argument: {arg_name}"
         # Substitute {var} in messages
         rendered: list[dict[str, Any]] = []
         for msg in prompt.get("messages") or []:
