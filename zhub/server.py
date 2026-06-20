@@ -113,6 +113,22 @@ if not access_log.handlers:
     access_log.setLevel(logging.INFO)
 
 
+def _coerce_manifest_caps(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Coerce manifest capabilities to list[dict].
+
+    Any c.get("name") call site will crash with AttributeError if
+    capabilities is a non-list (e.g. the string "chat") or contains
+    non-dict elements (e.g. individual characters from iterating a string).
+    Applied after signature verification so the hash is checked over the
+    wire payload, not a normalised copy.
+    """
+    caps = manifest.get("capabilities")
+    if not isinstance(caps, list):
+        return {**manifest, "capabilities": []}
+    clean = [c for c in caps if isinstance(c, dict)]
+    return manifest if len(clean) == len(caps) else {**manifest, "capabilities": clean}
+
+
 # ---- registry -----------------------------------------------------------
 
 @dataclass
@@ -275,6 +291,7 @@ class Hub:
             if not _verify(manifest):
                 raise PermissionError("manifest signature verification failed")
 
+        manifest = _coerce_manifest_caps(manifest)
         async with self.lock:
             # Re-registration path (after hub restart / publisher restart)
             if desired_api_key and self.storage:
@@ -387,6 +404,7 @@ class Hub:
             raise ValueError("unknown AI")
         if self.api_keys.get(api_key) != ai_name:
             raise PermissionError("invalid api key for this AI")
+        client_manifest = _coerce_manifest_caps(client_manifest)
         connection_id = "cx_" + secrets.token_urlsafe(8)
         reg = ConnectionRegistration(
             connection_id=connection_id,
@@ -432,6 +450,7 @@ class Hub:
 
         On re-registration with a known `desired_device_key` (post-restart),
         the same `exposure_id` is restored from persistence."""
+        manifest = _coerce_manifest_caps(manifest)
         async with self.lock:
             # Re-registration path
             if desired_device_key and self.storage:
