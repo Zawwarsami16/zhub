@@ -108,7 +108,11 @@ async def test_publisher_with_explicit_fake_brain(hub_port, tmp_path):
     deadline = time.time() + 25.0
     try:
         while time.time() < deadline:
-            line = await asyncio.wait_for(proc.stdout.readline(), timeout=4.0)
+            try:
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=4.0)
+            except asyncio.TimeoutError:
+                # Subprocess is still connecting / retrying — keep polling.
+                continue
             if not line:
                 break
             text = line.decode().strip()
