@@ -372,6 +372,24 @@ class Hub:
                 elif isinstance(item, asyncio.Queue):
                     item.put_nowait(None)
             publisher.pending.clear()
+            # Also drain any WS-session (ws_connect) chat requests routed to
+            # this publisher. If a ws_connect client sent a chat-request that
+            # was forwarded to the publisher and the publisher disconnects
+            # before responding, the route entry leaks and the client's WS
+            # hangs indefinitely — there is no per-request timeout on the
+            # ws_connect path. Send an error envelope back to each waiting
+            # client so it gets an immediate diagnostic instead of a silent hang.
+            stale = [(rid, ws) for rid, (ws, ai) in list(self.client_routes.items())
+                     if ai == name]
+            for rid, ws in stale:
+                self.client_routes.pop(rid, None)
+                try:
+                    await ws.send_text(
+                        error_envelope(rid, "ai_offline",
+                                       "AI disconnected before responding").to_json()
+                    )
+                except Exception:
+                    pass
         log.info("publisher unregistered: %s", name)
 
     def lookup_by_api_key(self, api_key: str) -> Optional[str]:
