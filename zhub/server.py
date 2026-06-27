@@ -2073,6 +2073,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                                 await target.put({"tool_call_delta": tcd, "done": False})
                             await target.put({"done": True, "finish_reason": finish_reason})
                             await target.put(None)
+                            publisher.pending.pop(env.request_id, None)
                         else:
                             target.set_result(env.payload)
                     elif env.request_id in hub.client_routes:
@@ -2091,6 +2092,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                             await target.put(env.payload)
                             if env.payload.get("done"):
                                 await target.put(None)
+                                publisher.pending.pop(env.request_id, None)
                     elif env.request_id in hub.client_routes:
                         client_ws, _ = hub.client_routes[env.request_id]
                         try:
