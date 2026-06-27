@@ -140,6 +140,8 @@ class ZhubMCPServer:
             return []
         out: list[dict[str, Any]] = []
         for r in manifest.get("resources") or []:
+            if not isinstance(r, dict):
+                continue
             uri = r.get("uri")
             if not uri:
                 continue
@@ -156,6 +158,8 @@ class ZhubMCPServer:
         if manifest is None:
             return None
         for r in manifest.get("resources") or []:
+            if not isinstance(r, dict):
+                continue
             if r.get("uri") == uri:
                 content = r.get("content") or ""
                 contents_entry: dict[str, Any] = {"uri": uri, "text": content}
@@ -170,6 +174,8 @@ class ZhubMCPServer:
             return []
         out: list[dict[str, Any]] = []
         for p in manifest.get("prompts") or []:
+            if not isinstance(p, dict):
+                continue
             name = p.get("name")
             if not name:
                 continue
@@ -191,7 +197,7 @@ class ZhubMCPServer:
             return None, "could not fetch manifest"
         prompt = next(
             (p for p in (manifest.get("prompts") or [])
-             if p.get("name") == name),
+             if isinstance(p, dict) and p.get("name") == name),
             None,
         )
         if prompt is None:
@@ -204,6 +210,8 @@ class ZhubMCPServer:
         # Substitute {var} in messages
         rendered: list[dict[str, Any]] = []
         for msg in prompt.get("messages") or []:
+            if not isinstance(msg, dict):
+                continue
             role = msg.get("role", "user")
             content = msg.get("content", "")
             if isinstance(content, str):
