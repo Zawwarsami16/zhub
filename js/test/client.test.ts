@@ -163,3 +163,64 @@ describe('ZhubConnection chat() happy path', () => {
     await conn.stop();
   });
 });
+
+describe('ZhubConnection chat() preserves full response payload', () => {
+  let wss: WebSocketServer;
+  let port: number;
+  let closeServer: () => Promise<void>;
+
+  before(async () => {
+    const s = await startServer();
+    wss = s.wss;
+    port = s.port;
+    closeServer = s.close;
+
+    // Responds with a tool_calls finish — Python's chat() returns the whole
+    // dict; JS previously dropped everything except `text`, losing tool_calls,
+    // finish_reason, usage. Regression: must survive.
+    wss.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'registered', request_id: 'r0', payload: {} }));
+      ws.on('message', (raw) => {
+        const env = JSON.parse(raw.toString());
+        if (env.type === 'chat-request') {
+          ws.send(JSON.stringify({
+            type: 'chat-response',
+            request_id: env.request_id,
+            payload: {
+              text: '',
+              finish_reason: 'tool_calls',
+              tool_calls: [
+                { id: 'c_1', type: 'function', function: { name: 'lookup', arguments: '{"city":"Paris"}' } },
+              ],
+              usage: { prompt_tokens: 12, completion_tokens: 7 },
+            },
+          }));
+        }
+      });
+    });
+  });
+
+  after(async () => {
+    await closeServer();
+  });
+
+  it('surfaces finish_reason, tool_calls, and usage alongside text', async () => {
+    const conn = connect({
+      aiName: 'test-ai',
+      apiKey: 'zk_test',
+      hubUrl: makeHubUrl(port),
+    });
+
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const result = await conn.chat([{ role: 'user', content: 'where' }], { timeoutMs: 5_000 });
+    assert.equal(result.text, '');
+    assert.equal(result.finish_reason, 'tool_calls');
+    assert.deepEqual(result.tool_calls, [
+      { id: 'c_1', type: 'function', function: { name: 'lookup', arguments: '{"city":"Paris"}' } },
+    ]);
+    assert.deepEqual(result.usage, { prompt_tokens: 12, completion_tokens: 7 });
+
+    await conn.stop();
+  });
+});
