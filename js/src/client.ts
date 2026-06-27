@@ -71,6 +71,8 @@ export interface PublishOptions {
   onConnectionEvent?: ConnectionEventHandler;
 }
 
+type PendingEntry = { resolve: (p: Record<string, unknown>) => void; reject: (e: Error) => void };
+
 export class ZhubPublication {
   name: string;
   baseUrl = '';
@@ -81,7 +83,7 @@ export class ZhubPublication {
   private onConnectionEvent: ConnectionEventHandler | undefined;
   private apiKeyForReregister: string | undefined;
   private ws: WebSocket | null = null;
-  private pending = new Map<string, (payload: Record<string, unknown>) => void>();
+  private pending = new Map<string, PendingEntry>();
   private connections = new Map<string, { client_manifest: Record<string, unknown> | null }>();
   private stopped = false;
 
@@ -124,9 +126,9 @@ export class ZhubPublication {
         this.pending.delete(env.request_id);
         reject(new ZhubConnectionError('invoke timed out'));
       }, timeoutMs);
-      this.pending.set(env.request_id, (payload) => {
-        clearTimeout(t);
-        resolve(payload);
+      this.pending.set(env.request_id, {
+        resolve: (payload) => { clearTimeout(t); resolve(payload); },
+        reject: (err) => { clearTimeout(t); reject(err); },
       });
       this.ws!.send(JSON.stringify(env));
     });
@@ -185,6 +187,9 @@ export class ZhubPublication {
       };
       ws.onclose = () => {
         this.ws = null;
+        const err = new ZhubConnectionError('connection closed');
+        for (const entry of this.pending.values()) entry.reject(err);
+        this.pending.clear();
         resolve();
       };
     });
@@ -211,7 +216,7 @@ export class ZhubPublication {
         const cb = this.pending.get(env.request_id);
         if (cb) {
           this.pending.delete(env.request_id);
-          cb(env.payload);
+          cb.resolve(env.payload);
         }
         return;
       }
@@ -320,7 +325,7 @@ export class ZhubConnection {
   clientManifest: Manifest;
   private capabilities: Record<string, CapabilityHandler>;
   private ws: WebSocket | null = null;
-  private pending = new Map<string, (payload: Record<string, unknown>) => void>();
+  private pending = new Map<string, PendingEntry>();
   private streams = new Map<string, (chunk: Record<string, unknown>) => void>();
   private stopped = false;
 
@@ -363,9 +368,9 @@ export class ZhubConnection {
         this.pending.delete(env.request_id);
         reject(new ZhubConnectionError('chat timed out'));
       }, opts.timeoutMs ?? 60_000);
-      this.pending.set(env.request_id, (payload) => {
-        clearTimeout(t);
-        resolve({ text: String(payload.text ?? '') });
+      this.pending.set(env.request_id, {
+        resolve: (payload) => { clearTimeout(t); resolve({ text: String(payload.text ?? '') }); },
+        reject: (err) => { clearTimeout(t); reject(err); },
       });
       this.ws!.send(JSON.stringify(env));
     });
@@ -418,6 +423,13 @@ export class ZhubConnection {
       ws.onerror = () => {};
       ws.onclose = () => {
         this.ws = null;
+        const err = new ZhubConnectionError('connection closed');
+        for (const entry of this.pending.values()) entry.reject(err);
+        this.pending.clear();
+        for (const onChunk of this.streams.values()) {
+          try { onChunk({ done: true, error: 'connection closed' }); } catch {}
+        }
+        this.streams.clear();
         resolve();
       };
     });
@@ -435,7 +447,7 @@ export class ZhubConnection {
         const cb = this.pending.get(env.request_id);
         if (cb) {
           this.pending.delete(env.request_id);
-          cb(env.payload);
+          cb.resolve(env.payload);
         }
         return;
       }
