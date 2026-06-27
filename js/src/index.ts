@@ -1,6 +1,6 @@
 export { publish, connect, ZhubPublication, ZhubConnection } from './client.js';
 export type {
-  PublishOptions, ConnectOptions, ChatHandler, CapabilityHandler, ConnectionEventHandler, ConnectionEventKind,
+  PublishOptions, ConnectOptions, ChatHandler, ChatResult, CapabilityHandler, ConnectionEventHandler, ConnectionEventKind,
 } from './client.js';
 export type { Manifest, Capability } from './manifest.js';
 export { chatOnlyManifest } from './manifest.js';

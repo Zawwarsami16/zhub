@@ -36,6 +36,8 @@ export type ChatHandler = (
   | AsyncIterable<string>
   | Iterable<string>;
 
+export type ChatResult = Record<string, unknown> & { text: string };
+
 export type CapabilityHandler = (
   args: Record<string, unknown>,
 ) => Promise<Record<string, unknown>> | Record<string, unknown>;
@@ -358,7 +360,7 @@ export class ZhubConnection {
   async chat(
     messages: Array<{ role: string; content: string }>,
     opts: { model?: string; temperature?: number; maxTokens?: number; timeoutMs?: number } = {},
-  ): Promise<{ text: string }> {
+  ): Promise<ChatResult> {
     if (!this.ws || this.ws.readyState !== 1) {
       throw new ZhubConnectionError('client not connected to hub');
     }
@@ -369,7 +371,7 @@ export class ZhubConnection {
         reject(new ZhubConnectionError('chat timed out'));
       }, opts.timeoutMs ?? 60_000);
       this.pending.set(env.request_id, {
-        resolve: (payload) => { clearTimeout(t); resolve({ text: String(payload.text ?? '') }); },
+        resolve: (payload) => { clearTimeout(t); resolve({ ...payload, text: String(payload.text ?? '') }); },
         reject: (err) => { clearTimeout(t); reject(err); },
       });
       this.ws!.send(JSON.stringify(env));
