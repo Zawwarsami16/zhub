@@ -15,6 +15,7 @@ import {
   Envelope,
   registerPublisher,
   registerConnection,
+  registerExposure,
   chatRequest,
   chatChunk,
   invokeRequest,
@@ -732,4 +733,191 @@ export function connect(opts: ConnectOptions): ZhubConnection {
   const conn = new ZhubConnection(opts);
   conn.start();
   return conn;
+}
+
+// ---- expose -------------------------------------------------------------
+
+export interface ExposeOptions {
+  name: string;
+  capabilities: Record<string, [Record<string, unknown>, CapabilityHandler]>;
+  hubUrl: string;
+  description?: string;
+  publicListing?: boolean;
+  operator?: string;
+  /** Re-registration: pass back the previous device_key to keep the same
+   * exposure_id across hub restarts. */
+  deviceKey?: string;
+  /** Optional access policy (Phase 15.0). Distinguishes three states:
+   *  - undefined → any registered publisher's bearer key can invoke
+   *    (backwards-compatible default).
+   *  - non-empty list → only those publisher names may invoke; others get 403.
+   *  - empty list `[]` → kill switch. Nobody can invoke. Useful for
+   *    temporarily quarantining a device without unregistering it. */
+  allowPublishers?: string[];
+}
+
+/**
+ * Returned by expose(). A device-only registration: not paired with any
+ * specific AI; any AI on the hub can invoke this exposure's capabilities via
+ * `/exposures/<id>/invoke`. Mirror of Python's ZhubExposure.
+ */
+export class ZhubExposure {
+  name: string;
+  hubUrl: string;
+  /** Set on the first `exposure-registered` envelope. */
+  exposureId = '';
+  /** Set on first register; reuse to keep the same `exposureId` across hub
+   * restarts. */
+  deviceKey = '';
+  private manifest: Manifest;
+  private capabilities: Record<string, CapabilityHandler>;
+  private allowPublishers: string[] | undefined;
+  private initialDeviceKey: string | undefined;
+  private ws: WebSocket | null = null;
+  private stopped = false;
+  private stopResolvers: Array<() => void> = [];
+
+  constructor(opts: ExposeOptions, manifest: Manifest) {
+    this.name = opts.name;
+    this.hubUrl = opts.hubUrl;
+    this.manifest = manifest;
+    this.allowPublishers = opts.allowPublishers;
+    this.initialDeviceKey = opts.deviceKey;
+    this.capabilities = Object.fromEntries(
+      Object.entries(opts.capabilities).map(([n, [, h]]) => [n, h]),
+    );
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+    this.ws?.close();
+    const resolvers = this.stopResolvers.splice(0);
+    for (const r of resolvers) r();
+  }
+
+  /** Block until stop() is called — mirror of Python's ZhubExposure.run_forever(). */
+  runForever(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.stopResolvers.push(resolve);
+    });
+  }
+
+  /** Internal — call from expose(). */
+  start(): void {
+    void this.runReconnectLoop();
+  }
+
+  private async runReconnectLoop(): Promise<void> {
+    let backoff = 1.0;
+    while (!this.stopped) {
+      try {
+        await this.serveOneSession();
+        backoff = 1.0;
+      } catch (err) {
+        if (err instanceof AuthError) return;
+      }
+      if (this.stopped) return;
+      await new Promise((r) => setTimeout(r, backoff * 1000));
+      backoff = Math.min(backoff * 2, 60);
+    }
+  }
+
+  private serveOneSession(): Promise<void> {
+    const url = toWsUrl(this.hubUrl, '/ws/expose');
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocketImpl(url) as WebSocket;
+      this.ws = ws;
+      ws.onopen = () => {
+        const manifestDict: Record<string, unknown> = {
+          ...(this.manifest as unknown as Record<string, unknown>),
+        };
+        if (this.allowPublishers !== undefined) {
+          manifestDict.allow_publishers = [...this.allowPublishers];
+        }
+        const registerKey = this.deviceKey || this.initialDeviceKey;
+        ws.send(JSON.stringify(registerExposure(this.name, manifestDict, registerKey ?? null)));
+      };
+      ws.onmessage = (msg) => {
+        let env: Envelope;
+        try {
+          env = JSON.parse(typeof msg.data === 'string' ? msg.data : String(msg.data));
+        } catch {
+          return;
+        }
+        void this.handleMessage(ws, env, reject);
+      };
+      ws.onerror = () => {};
+      ws.onclose = () => {
+        this.ws = null;
+        resolve();
+      };
+    });
+  }
+
+  private async handleMessage(
+    ws: WebSocket,
+    env: Envelope,
+    reject: (e: Error) => void,
+  ): Promise<void> {
+    switch (env.type) {
+      case 'exposure-registered': {
+        this.exposureId = String(env.payload.exposure_id ?? '');
+        const newKey = String(env.payload.device_key ?? '');
+        if (newKey) this.deviceKey = newKey;
+        return;
+      }
+      case 'invoke-request': {
+        const capability = String(env.payload.capability ?? '');
+        const args = (env.payload.args as Record<string, unknown>) ?? {};
+        const handler = this.capabilities[capability];
+        if (!handler) {
+          ws.send(JSON.stringify(invokeResult(env.request_id, false, undefined, `capability '${capability}' not exposed`)));
+          return;
+        }
+        try {
+          const out = await Promise.resolve(handler(args));
+          ws.send(JSON.stringify(invokeResult(env.request_id, true, out)));
+        } catch (e) {
+          ws.send(JSON.stringify(invokeResult(env.request_id, false, undefined, (e as Error).message)));
+        }
+        return;
+      }
+      case 'error': {
+        if (env.payload.code === 'register_failed') {
+          ws.close();
+          reject(new AuthError(String(env.payload.message ?? 'register failed')));
+        }
+        return;
+      }
+    }
+  }
+}
+
+/**
+ * Register device capabilities on a hub WITHOUT pairing to any one AI.
+ * Returns a ZhubExposure with `exposureId` and `deviceKey` populated after the
+ * WS handshake. Mirror of Python's expose().
+ */
+export function expose(opts: ExposeOptions): ZhubExposure {
+  const capabilities: Capability[] = Object.entries(opts.capabilities).map(([name, [schema]]) => ({
+    name,
+    description: '',
+    schema,
+  }));
+  const manifest: Manifest = {
+    schema_version: '0.1',
+    name: opts.name,
+    description: opts.description ?? `device: ${opts.name}`,
+    operator: opts.operator ?? '',
+    capabilities,
+    auth: { type: 'bearer' },
+    rate_limit: '60/min',
+    public: opts.publicListing ?? true,
+    contact: '',
+    extensions: {},
+  };
+  const exp = new ZhubExposure(opts, manifest);
+  exp.start();
+  return exp;
 }
