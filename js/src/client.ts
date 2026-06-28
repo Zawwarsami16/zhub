@@ -103,6 +103,7 @@ export class ZhubPublication {
   private pending = new Map<string, PendingEntry>();
   private connections = new Map<string, { client_manifest: Record<string, unknown> | null }>();
   private stopped = false;
+  private stopResolvers: Array<() => void> = [];
 
   constructor(opts: PublishOptions, manifest: Manifest) {
     this.name = opts.name;
@@ -154,6 +155,16 @@ export class ZhubPublication {
   async stop(): Promise<void> {
     this.stopped = true;
     this.ws?.close();
+    const resolvers = this.stopResolvers.splice(0);
+    for (const r of resolvers) r();
+  }
+
+  /** Block until stop() is called — mirror of Python's ZhubPublication.run_forever(). */
+  runForever(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.stopResolvers.push(resolve);
+    });
   }
 
   /** Internal — start the connect loop. Called by the public publish() helper. */
@@ -345,6 +356,7 @@ export class ZhubConnection {
   private pending = new Map<string, PendingEntry>();
   private streams = new Map<string, (chunk: Record<string, unknown>) => void>();
   private stopped = false;
+  private stopResolvers: Array<() => void> = [];
 
   constructor(opts: ConnectOptions) {
     this.aiName = opts.aiName;
@@ -396,6 +408,16 @@ export class ZhubConnection {
   async stop(): Promise<void> {
     this.stopped = true;
     this.ws?.close();
+    const resolvers = this.stopResolvers.splice(0);
+    for (const r of resolvers) r();
+  }
+
+  /** Block until stop() is called — mirror of Python's ZhubConnection.run_forever(). */
+  runForever(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.stopResolvers.push(resolve);
+    });
   }
 
   /** Internal — call from connect(). */
