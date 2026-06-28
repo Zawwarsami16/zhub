@@ -98,6 +98,10 @@ export interface PublishOptions {
   contact?: string;
   apiKey?: string;
   rateLimit?: string;
+  // Phase 9.0 — MCP resources + prompts the publisher wants in its manifest.
+  // mcp_server iterates these to answer resources/list, prompts/list etc.
+  resources?: Array<Record<string, unknown>>;
+  prompts?: Array<Record<string, unknown>>;
   onConnectionEvent?: ConnectionEventHandler;
 }
 
@@ -454,6 +458,8 @@ export function publish(opts: PublishOptions): ZhubPublication {
     contact: opts.contact,
     public: opts.publicListing,
     rateLimit: opts.rateLimit,
+    resources: opts.resources,
+    prompts: opts.prompts,
   });
   if (opts.capabilities) manifest.capabilities = [...(manifest.capabilities ?? []), ...opts.capabilities];
   const pub = new ZhubPublication(opts, manifest);
