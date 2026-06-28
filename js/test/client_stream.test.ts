@@ -113,6 +113,69 @@ describe('ZhubConnection.chatStream', () => {
     }
   });
 
+  it('forwards a single chat-response into the stream as text-delta + done', async () => {
+    // Regression: a publisher that ignores stream:true (chat_handler returns
+    // a plain string/{text}) replies with one chat-response, not chat-chunks.
+    // Python's chat_stream() unpacks that into {delta:text, done:false} +
+    // {done:true} (zhub/client.py:549-552); the JS port routed chat-response
+    // only through `pending` so a chatStream() caller hung for the full
+    // per-chunk timeout. Pre-fix this assertion never reached the elapsed
+    // check — the for-await blocked on the next chunk that never came.
+    const s = await startServer((ws, env) => {
+      if (env.type !== 'chat-request') return;
+      ws.send(JSON.stringify({
+        type: 'chat-response',
+        request_id: env.request_id,
+        payload: { text: 'whole response', finish_reason: 'stop' },
+      }));
+    });
+    try {
+      const conn = connect({ aiName: 'test-ai', apiKey: 'zk_test', hubUrl: makeHubUrl(s.port) });
+      await new Promise<void>((r) => setTimeout(r, 100));
+
+      const out: string[] = [];
+      const start = Date.now();
+      for await (const delta of conn.chatStream([{ role: 'user', content: 'hi' }], { timeoutPerChunkMs: 60_000 })) {
+        out.push(delta);
+      }
+      const elapsed = Date.now() - start;
+      assert.deepEqual(out, ['whole response']);
+      assert(elapsed < 2_000, `expected immediate exit on chat-response, got ${elapsed}ms`);
+
+      await conn.stop();
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('empty-text chat-response into stream exits cleanly with no yield', async () => {
+    const s = await startServer((ws, env) => {
+      if (env.type !== 'chat-request') return;
+      ws.send(JSON.stringify({
+        type: 'chat-response',
+        request_id: env.request_id,
+        payload: { text: '', finish_reason: 'stop' },
+      }));
+    });
+    try {
+      const conn = connect({ aiName: 'test-ai', apiKey: 'zk_test', hubUrl: makeHubUrl(s.port) });
+      await new Promise<void>((r) => setTimeout(r, 100));
+
+      const out: string[] = [];
+      const start = Date.now();
+      for await (const delta of conn.chatStream([{ role: 'user', content: 'hi' }], { timeoutPerChunkMs: 60_000 })) {
+        out.push(delta);
+      }
+      const elapsed = Date.now() - start;
+      assert.deepEqual(out, []);
+      assert(elapsed < 2_000, `expected immediate exit, got ${elapsed}ms`);
+
+      await conn.stop();
+    } finally {
+      await s.close();
+    }
+  });
+
   it('sends stream:true on the chat-request envelope', async () => {
     let captured: Record<string, unknown> | null = null;
     const s = await startServer((ws, env) => {
