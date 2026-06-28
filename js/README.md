@@ -58,6 +58,16 @@ const reply = await conn.chat([{ role: 'user', content: 'hi' }]);
 console.log('AI replied:', reply.text);
 ```
 
+### Streaming
+
+`chatStream()` returns an async iterator over the AI's text deltas — mirror of Python's `conn.chat_stream(...)`.
+
+```typescript
+for await (const delta of conn.chatStream([{ role: 'user', content: 'tell me a story' }])) {
+  process.stdout.write(delta);
+}
+```
+
 ## Browser usage
 
 The library uses the global `WebSocket` when present (browsers) and falls back to `ws` in Node. Connect-mode is the primary browser use case. Publish-mode also works in browsers.
