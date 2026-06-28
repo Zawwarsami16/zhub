@@ -683,6 +683,17 @@ export class ZhubConnection {
           this.pending.delete(env.request_id);
           cb.resolve(env.payload);
         }
+        // A publisher that ignores the stream:true flag (e.g. one whose
+        // chat_handler returns a plain string or {text}) replies with a
+        // single chat-response. Forward it to a registered stream consumer
+        // as text-delta + done so chatStream() doesn't hang waiting for
+        // chat-chunks that will never arrive — mirrors zhub/client.py.
+        const onStream = this.streams.get(env.request_id);
+        if (onStream) {
+          const text = String((env.payload as { text?: unknown }).text ?? '');
+          onStream({ delta: text, done: false });
+          onStream({ done: true });
+        }
         return;
       }
       case 'chat-chunk': {
