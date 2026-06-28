@@ -49,12 +49,27 @@ export type ConnectionEventHandler = (
   clientManifest: Record<string, unknown> | null,
 ) => void;
 
-function toWsUrl(input: string, path: string): string {
-  const replaced = input
-    .replace(/^https:\/\//, 'wss://')
-    .replace(/^http:\/\//, 'ws://');
-  const trimmed = replaced.endsWith('/') ? replaced.slice(0, -1) : replaced;
-  return trimmed + path;
+export function toWsUrl(input: string, path: string): string {
+  // Mirror zhub.client._to_ws_url: accept http(s)/ws(s)/no-scheme, preserve
+  // port + path prefix, default unknown or missing schemes to wss.
+  if (!input) throw new Error(`could not parse hub url: ${input}`);
+  const schemeMap: Record<string, string> = { https: 'wss', http: 'ws', wss: 'wss', ws: 'ws' };
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+\-.]*):\/\//.exec(input);
+  let scheme: string;
+  let rest: string;
+  if (schemeMatch) {
+    scheme = schemeMap[schemeMatch[1].toLowerCase()] ?? 'wss';
+    rest = input.slice(schemeMatch[0].length);
+  } else {
+    scheme = 'wss';
+    rest = input;
+  }
+  const slash = rest.indexOf('/');
+  const netloc = slash === -1 ? rest : rest.slice(0, slash);
+  const rawPrefix = slash === -1 ? '' : rest.slice(slash);
+  if (!netloc) throw new Error(`could not parse hub url: ${input}`);
+  const prefix = rawPrefix.replace(/\/+$/, '');
+  return `${scheme}://${netloc}${prefix}${path}`;
 }
 
 // ---- publish ------------------------------------------------------------
