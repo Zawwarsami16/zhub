@@ -113,6 +113,33 @@ export function invokeResult(
   );
 }
 
+export function registerExposure(
+  name: string,
+  manifest: Record<string, unknown>,
+  deviceKey?: string | null,
+): Envelope {
+  // Phase 7.0: device announces capabilities WITHOUT pairing to an AI.
+  // Hub mints a `dx_` device key + `ex_` exposure id on first register;
+  // re-registration with the same device_key restores the same exposure_id.
+  return envelope('register-exposure', {
+    name,
+    manifest,
+    device_key: deviceKey ?? null,
+  });
+}
+
+export function exposureRegistered(
+  exposureId: string,
+  deviceKey: string,
+  name: string,
+): Envelope {
+  return envelope('exposure-registered', {
+    exposure_id: exposureId,
+    device_key: deviceKey,
+    name,
+  });
+}
+
 export function errorEnvelope(
   requestId: string,
   code: string,
