@@ -26,6 +26,10 @@ const pub = publish({
 while (!pub.apiKey) await new Promise((r) => setTimeout(r, 50));
 console.log('URL:', `https://hub.example.com${pub.baseUrl}`);
 console.log('KEY:', pub.apiKey);
+
+// Keep the publisher alive until you call pub.stop() (mirror of
+// Python's await pub.run_forever()).
+await pub.runForever();
 ```
 
 ## Connect — chat from a browser/Node client
