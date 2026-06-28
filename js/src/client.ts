@@ -26,6 +26,19 @@ import { AuthError, ZhubConnectionError } from './errors.js';
 const _globalWS = (globalThis as unknown as { WebSocket?: typeof WebSocket }).WebSocket;
 const WebSocketImpl: typeof WebSocket = (_globalWS ?? (WS as unknown as typeof WebSocket)) as typeof WebSocket;
 
+/** A streaming chunk emitted by a chat handler. May be a plain text delta or
+ * a structured payload carrying a `tool_call_delta`, `finish_reason`, and/or
+ * `done` marker — same shape Python's `_serialize_stream_chunk` understands. */
+export type ChatChunkLike =
+  | string
+  | {
+      delta?: string;
+      tool_call_delta?: Record<string, unknown>;
+      done?: boolean;
+      finish_reason?: string;
+      [key: string]: unknown;
+    };
+
 export type ChatHandler = (
   messages: Array<{ role: string; content: string }>,
   options: Record<string, unknown>,
@@ -33,8 +46,8 @@ export type ChatHandler = (
   | string
   | Promise<string>
   | { text: string; finish_reason?: string }
-  | AsyncIterable<string>
-  | Iterable<string>;
+  | AsyncIterable<ChatChunkLike>
+  | Iterable<ChatChunkLike>;
 
 export type ChatResult = Record<string, unknown> & { text: string };
 
@@ -271,28 +284,25 @@ export class ZhubPublication {
     const messages = (env.payload.messages as Array<{ role: string; content: string }>) ?? [];
     const options = { ...env.payload };
     delete (options as Record<string, unknown>).messages;
+    const streamingRequested = Boolean((options as Record<string, unknown>).stream);
     try {
       const result = this.chatHandler(messages, options);
 
-      // Async iterator → stream chat-chunks
-      if (result && typeof result === 'object' && Symbol.asyncIterator in result) {
-        for await (const chunk of result as AsyncIterable<string>) {
-          ws.send(JSON.stringify(chatChunk(String(chunk), env.request_id)));
-        }
-        ws.send(JSON.stringify(chatChunk('', env.request_id, true, 'stop')));
-        return;
-      }
-      // Sync iterator (not string/dict) → also stream
-      if (
+      const isAsyncIter =
+        result && typeof result === 'object' && Symbol.asyncIterator in (result as object);
+      const isSyncIter =
+        !isAsyncIter &&
         result && typeof result === 'object' &&
         Symbol.iterator in (result as object) &&
         typeof (result as { text?: string }).text === 'undefined' &&
-        typeof result !== 'string'
-      ) {
-        for (const chunk of result as Iterable<string>) {
-          ws.send(JSON.stringify(chatChunk(String(chunk), env.request_id)));
+        typeof result !== 'string';
+
+      if (isAsyncIter || isSyncIter) {
+        if (streamingRequested) {
+          await this.streamHandlerOutput(ws, env.request_id, result as AsyncIterable<ChatChunkLike> | Iterable<ChatChunkLike>);
+        } else {
+          await this.accumulateHandlerOutput(ws, env.request_id, result as AsyncIterable<ChatChunkLike> | Iterable<ChatChunkLike>);
         }
-        ws.send(JSON.stringify(chatChunk('', env.request_id, true, 'stop')));
         return;
       }
 
@@ -318,6 +328,122 @@ export class ZhubPublication {
       );
     }
   }
+
+  private async streamHandlerOutput(
+    ws: WebSocket,
+    requestId: string,
+    iter: AsyncIterable<ChatChunkLike> | Iterable<ChatChunkLike>,
+  ): Promise<void> {
+    let finalFinish: string | undefined;
+    for await (const chunk of iter as AsyncIterable<ChatChunkLike>) {
+      const { envelope: e, finishReason } = serializeStreamChunk(chunk, requestId);
+      if (finishReason) finalFinish = finishReason;
+      ws.send(JSON.stringify(e));
+    }
+    ws.send(JSON.stringify(chatChunk('', requestId, true, finalFinish ?? 'stop')));
+  }
+
+  private async accumulateHandlerOutput(
+    ws: WebSocket,
+    requestId: string,
+    iter: AsyncIterable<ChatChunkLike> | Iterable<ChatChunkLike>,
+  ): Promise<void> {
+    const textParts: string[] = [];
+    const tcSlots = new Map<number, Record<string, unknown>>();
+    let finalFinish: string | undefined;
+    for await (const chunk of iter as AsyncIterable<ChatChunkLike>) {
+      const { text, toolCallDelta, finishReason } = chunkFields(chunk);
+      if (text) textParts.push(text);
+      if (toolCallDelta) accumulateToolCall(tcSlots, toolCallDelta);
+      if (finishReason) finalFinish = finishReason;
+    }
+    const payload: Record<string, unknown> = {
+      text: textParts.join(''),
+      finish_reason: finalFinish ?? 'stop',
+    };
+    if (tcSlots.size > 0) {
+      payload.tool_calls = Array.from(tcSlots.keys()).sort((a, b) => a - b).map((i) => tcSlots.get(i)!);
+    }
+    ws.send(
+      JSON.stringify({ type: 'chat-response', request_id: requestId, payload }),
+    );
+  }
+}
+
+/** Mirror of Python's `_serialize_stream_chunk`. Builds a chat-chunk envelope
+ * from a string text-delta or a structured chunk carrying delta /
+ * tool_call_delta / done / finish_reason. Returns the envelope plus any
+ * finish_reason carried (so the caller can echo it on the terminator). */
+function serializeStreamChunk(
+  chunk: ChatChunkLike,
+  requestId: string,
+): { envelope: Envelope; finishReason?: string } {
+  if (typeof chunk === 'string') {
+    return { envelope: chatChunk(chunk, requestId) };
+  }
+  if (chunk && typeof chunk === 'object') {
+    const c = chunk as Record<string, unknown>;
+    const payload: Record<string, unknown> = {};
+    const delta = (c.delta ?? '') as string;
+    const tcd = c.tool_call_delta;
+    const done = Boolean(c.done);
+    const finish = (c.finish_reason as string | undefined) || undefined;
+    if (delta) payload.delta = delta;
+    if (tcd) payload.tool_call_delta = tcd;
+    payload.done = done;
+    if (finish) payload.finish_reason = finish;
+    return {
+      envelope: { type: 'chat-chunk', request_id: requestId, payload },
+      finishReason: finish,
+    };
+  }
+  return {
+    envelope: { type: 'chat-chunk', request_id: requestId, payload: { delta: String(chunk), done: false } },
+  };
+}
+
+/** Mirror of Python's `_chunk_fields` — extract (text, tool_call_delta,
+ * finish_reason) from a raw chat-handler chunk for non-streaming accumulation. */
+function chunkFields(chunk: ChatChunkLike): {
+  text: string;
+  toolCallDelta?: Record<string, unknown>;
+  finishReason?: string;
+} {
+  if (typeof chunk === 'string') return { text: chunk };
+  if (chunk && typeof chunk === 'object') {
+    const c = chunk as Record<string, unknown>;
+    return {
+      text: (c.delta as string) || '',
+      toolCallDelta: c.tool_call_delta as Record<string, unknown> | undefined,
+      finishReason: c.finish_reason as string | undefined,
+    };
+  }
+  return { text: String(chunk) };
+}
+
+/** Mirror of Python's `_accumulate_tool_call` — fold one tool_call delta into
+ * `slots` keyed by index; set id/type once, keep the function name, concat arg
+ * fragments. Same accumulator the hub uses on its streaming path, so a
+ * non-streaming HTTP caller sees a fully assembled tool_calls list. */
+function accumulateToolCall(
+  slots: Map<number, Record<string, unknown>>,
+  tcd: Record<string, unknown>,
+): void {
+  const idx = (tcd.index as number) ?? 0;
+  let slot = slots.get(idx);
+  if (!slot) {
+    slot = { function: {} };
+    slots.set(idx, slot);
+  }
+  if ('id' in tcd) slot.id = tcd.id;
+  if ('type' in tcd) slot.type = tcd.type;
+  const fnIn = (tcd.function as Record<string, unknown>) || {};
+  const fn = (slot.function as Record<string, unknown>) ?? {};
+  if ('name' in fnIn) fn.name = fnIn.name;
+  if ('arguments' in fnIn) {
+    fn.arguments = ((fn.arguments as string) ?? '') + (fnIn.arguments as string);
+  }
+  slot.function = fn;
 }
 
 export function publish(opts: PublishOptions): ZhubPublication {
