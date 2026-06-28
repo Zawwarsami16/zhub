@@ -25,6 +25,12 @@ export interface Manifest {
   contact?: string;
   signature?: string;
   public_key?: string;
+  // Phase 9.0 — MCP resources + prompts surface, declared inline.
+  // Each resource: {uri, name, description?, mimeType?, content}
+  // Each prompt:   {name, description?, arguments?: [{name, required?, description?}],
+  //                 messages: [{role, content (str)}] with {var} placeholders}
+  resources?: Array<Record<string, unknown>>;
+  prompts?: Array<Record<string, unknown>>;
   extensions?: Record<string, unknown>;
 }
 
@@ -35,6 +41,8 @@ export function chatOnlyManifest(opts: {
   contact?: string;
   public?: boolean;
   rateLimit?: string;
+  resources?: Array<Record<string, unknown>>;
+  prompts?: Array<Record<string, unknown>>;
 }): Manifest {
   return {
     schema_version: '0.1',
@@ -47,12 +55,22 @@ export function chatOnlyManifest(opts: {
       {
         name: 'chat',
         description: 'OpenAI-compatible chat completions endpoint.',
-        schema: { type: 'object' },
+        schema: {
+          type: 'object',
+          properties: {
+            messages: { type: 'array' },
+            model: { type: 'string' },
+            temperature: { type: 'number' },
+            max_tokens: { type: 'integer' },
+          },
+        },
       },
     ],
     public: opts.public ?? false,
     operator: opts.operator ?? '',
     contact: opts.contact ?? '',
+    resources: opts.resources ?? [],
+    prompts: opts.prompts ?? [],
     extensions: {},
   };
 }
