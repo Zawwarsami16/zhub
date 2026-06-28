@@ -405,6 +405,69 @@ export class ZhubConnection {
     });
   }
 
+  /**
+   * Async iterator over streaming chunks — JS mirror of Python's chat_stream().
+   *
+   *   for await (const delta of conn.chatStream([{role:'user', content:'hi'}])) {
+   *     process.stdout.write(delta);
+   *   }
+   *
+   * Yields each chunk's text delta as a string. Ends on done=true, on an
+   * error envelope (including the `connection closed` sentinel pushed by
+   * the disconnect drain), or when no chunk arrives within
+   * `timeoutPerChunkMs`. A publisher that flags its final content chunk
+   * with done=true in the same envelope as a non-empty delta has that
+   * delta yielded before the loop exits — matches the Python contract.
+   */
+  async *chatStream(
+    messages: Array<{ role: string; content: string }>,
+    opts: { model?: string; temperature?: number; maxTokens?: number; timeoutPerChunkMs?: number } = {},
+  ): AsyncGenerator<string, void, void> {
+    if (!this.ws || this.ws.readyState !== 1) {
+      throw new ZhubConnectionError('client not connected to hub');
+    }
+    const env = chatRequest(messages, opts.model, opts.temperature, opts.maxTokens, { stream: true });
+    const timeoutMs = opts.timeoutPerChunkMs ?? 60_000;
+    const queue: Array<Record<string, unknown>> = [];
+    let wake: (() => void) | null = null;
+    const push = (chunk: Record<string, unknown>): void => {
+      queue.push(chunk);
+      const w = wake;
+      wake = null;
+      if (w) w();
+    };
+    this.streams.set(env.request_id, push);
+    try {
+      this.ws.send(JSON.stringify(env));
+      while (true) {
+        if (queue.length === 0) {
+          const timedOut = await new Promise<boolean>((resolve) => {
+            let settled = false;
+            const t = setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              wake = null;
+              resolve(true);
+            }, timeoutMs);
+            wake = () => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(t);
+              resolve(false);
+            };
+          });
+          if (timedOut) break;
+        }
+        const item = queue.shift()!;
+        const delta = typeof item.delta === 'string' ? item.delta : '';
+        if (delta) yield delta;
+        if (item.done || item.error) break;
+      }
+    } finally {
+      this.streams.delete(env.request_id);
+    }
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     this.ws?.close();
