@@ -408,7 +408,9 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
         if isinstance(result, str):
             payload = {"text": result, "finish_reason": "stop"}
         elif isinstance(result, dict):
-            payload = result
+            # Copy first — setdefault on the handler-supplied dict would mutate
+            # a caller's template / cached response by adding text:"" + finish_reason:"stop".
+            payload = dict(result)
             payload.setdefault("finish_reason", "stop")
             payload.setdefault("text", "")
         else:
