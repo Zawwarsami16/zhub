@@ -23,6 +23,21 @@ import {
 } from './protocol.js';
 import { AuthError, ZhubConnectionError } from './errors.js';
 
+// Mirror Python's `str(e)`: surface non-Error throws (a string, number, plain
+// object, undefined — all valid in JS) as a readable message instead of
+// `undefined` from a blind `errorMessage(e)` read. A handler that
+// `throw "bad input"`s otherwise round-tripped as `error: undefined` →
+// stripped from JSON, so the caller saw `{ok:false}` with no diagnostic.
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'string') return e;
+  try {
+    return String(e);
+  } catch {
+    return 'unknown error';
+  }
+}
+
 // Pick the global WebSocket if it exists (browsers), fall back to ws (Node).
 const _globalWS = (globalThis as unknown as { WebSocket?: typeof WebSocket }).WebSocket;
 const WebSocketImpl: typeof WebSocket = (_globalWS ?? (WS as unknown as typeof WebSocket)) as typeof WebSocket;
@@ -328,7 +343,7 @@ export class ZhubPublication {
         JSON.stringify({
           type: 'chat-response',
           request_id: env.request_id,
-          payload: { text: `[chat handler error] ${(e as Error).message}`, finish_reason: 'error' },
+          payload: { text: `[chat handler error] ${errorMessage(e)}`, finish_reason: 'error' },
         }),
       );
     }
@@ -714,7 +729,7 @@ export class ZhubConnection {
           const out = await Promise.resolve(handler(args));
           ws.send(JSON.stringify(invokeResult(env.request_id, true, out)));
         } catch (e) {
-          ws.send(JSON.stringify(invokeResult(env.request_id, false, undefined, (e as Error).message)));
+          ws.send(JSON.stringify(invokeResult(env.request_id, false, undefined, errorMessage(e))));
         }
         return;
       }
@@ -879,7 +894,7 @@ export class ZhubExposure {
           const out = await Promise.resolve(handler(args));
           ws.send(JSON.stringify(invokeResult(env.request_id, true, out)));
         } catch (e) {
-          ws.send(JSON.stringify(invokeResult(env.request_id, false, undefined, (e as Error).message)));
+          ws.send(JSON.stringify(invokeResult(env.request_id, false, undefined, errorMessage(e))));
         }
         return;
       }
