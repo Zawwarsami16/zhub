@@ -137,6 +137,8 @@ export class ZhubPublication {
   private connections = new Map<string, { client_manifest: Record<string, unknown> | null }>();
   private stopped = false;
   private stopResolvers: Array<() => void> = [];
+  private stopSleepResolver: (() => void) | null = null;
+  private task: Promise<void> | null = null;
 
   constructor(opts: PublishOptions, manifest: Manifest) {
     this.name = opts.name;
@@ -188,8 +190,14 @@ export class ZhubPublication {
   async stop(): Promise<void> {
     this.stopped = true;
     this.ws?.close();
+    this.stopSleepResolver?.();
     const resolvers = this.stopResolvers.splice(0);
     for (const r of resolvers) r();
+    const task = this.task;
+    this.task = null;
+    if (task) {
+      try { await task; } catch { /* drained */ }
+    }
   }
 
   /** Block until stop() is called — mirror of Python's ZhubPublication.run_forever(). */
@@ -202,7 +210,25 @@ export class ZhubPublication {
 
   /** Internal — start the connect loop. Called by the public publish() helper. */
   start(): void {
-    void this.runReconnectLoop();
+    this.task = this.runReconnectLoop();
+  }
+
+  private sleep(ms: number): Promise<void> {
+    // Mirror Python's `asyncio.wait_for(stop_event.wait(), timeout=backoff)`:
+    // stop() must interrupt the in-flight backoff sleep, otherwise a JS
+    // caller shutting down during a reconnect wait would keep an unbounded
+    // Node timer alive and block a clean process exit for up to 60s.
+    return new Promise<void>((resolve) => {
+      const t = setTimeout(() => {
+        this.stopSleepResolver = null;
+        resolve();
+      }, ms);
+      this.stopSleepResolver = () => {
+        clearTimeout(t);
+        this.stopSleepResolver = null;
+        resolve();
+      };
+    });
   }
 
   private async runReconnectLoop(): Promise<void> {
@@ -219,7 +245,7 @@ export class ZhubPublication {
         // any other error → reconnect after backoff
       }
       if (this.stopped) return;
-      await new Promise((r) => setTimeout(r, backoff * 1000));
+      await this.sleep(backoff * 1000);
       backoff = Math.min(backoff * 2, 60);
     }
   }
@@ -505,6 +531,8 @@ export class ZhubConnection {
   private streams = new Map<string, (chunk: Record<string, unknown>) => void>();
   private stopped = false;
   private stopResolvers: Array<() => void> = [];
+  private stopSleepResolver: (() => void) | null = null;
+  private task: Promise<void> | null = null;
 
   constructor(opts: ConnectOptions) {
     this.aiName = opts.aiName;
@@ -619,8 +647,14 @@ export class ZhubConnection {
   async stop(): Promise<void> {
     this.stopped = true;
     this.ws?.close();
+    this.stopSleepResolver?.();
     const resolvers = this.stopResolvers.splice(0);
     for (const r of resolvers) r();
+    const task = this.task;
+    this.task = null;
+    if (task) {
+      try { await task; } catch { /* drained */ }
+    }
   }
 
   /** Block until stop() is called — mirror of Python's ZhubConnection.run_forever(). */
@@ -633,7 +667,21 @@ export class ZhubConnection {
 
   /** Internal — call from connect(). */
   start(): void {
-    void this.runReconnectLoop();
+    this.task = this.runReconnectLoop();
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const t = setTimeout(() => {
+        this.stopSleepResolver = null;
+        resolve();
+      }, ms);
+      this.stopSleepResolver = () => {
+        clearTimeout(t);
+        this.stopSleepResolver = null;
+        resolve();
+      };
+    });
   }
 
   private async runReconnectLoop(): Promise<void> {
@@ -646,7 +694,7 @@ export class ZhubConnection {
         if (err instanceof AuthError) return;
       }
       if (this.stopped) return;
-      await new Promise((r) => setTimeout(r, backoff * 1000));
+      await this.sleep(backoff * 1000);
       backoff = Math.min(backoff * 2, 60);
     }
   }
@@ -791,6 +839,8 @@ export class ZhubExposure {
   private ws: WebSocket | null = null;
   private stopped = false;
   private stopResolvers: Array<() => void> = [];
+  private stopSleepResolver: (() => void) | null = null;
+  private task: Promise<void> | null = null;
 
   constructor(opts: ExposeOptions, manifest: Manifest) {
     this.name = opts.name;
@@ -806,8 +856,14 @@ export class ZhubExposure {
   async stop(): Promise<void> {
     this.stopped = true;
     this.ws?.close();
+    this.stopSleepResolver?.();
     const resolvers = this.stopResolvers.splice(0);
     for (const r of resolvers) r();
+    const task = this.task;
+    this.task = null;
+    if (task) {
+      try { await task; } catch { /* drained */ }
+    }
   }
 
   /** Block until stop() is called — mirror of Python's ZhubExposure.run_forever(). */
@@ -820,7 +876,21 @@ export class ZhubExposure {
 
   /** Internal — call from expose(). */
   start(): void {
-    void this.runReconnectLoop();
+    this.task = this.runReconnectLoop();
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const t = setTimeout(() => {
+        this.stopSleepResolver = null;
+        resolve();
+      }, ms);
+      this.stopSleepResolver = () => {
+        clearTimeout(t);
+        this.stopSleepResolver = null;
+        resolve();
+      };
+    });
   }
 
   private async runReconnectLoop(): Promise<void> {
@@ -833,7 +903,7 @@ export class ZhubExposure {
         if (err instanceof AuthError) return;
       }
       if (this.stopped) return;
-      await new Promise((r) => setTimeout(r, backoff * 1000));
+      await this.sleep(backoff * 1000);
       backoff = Math.min(backoff * 2, 60);
     }
   }
