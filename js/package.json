@@ -26,7 +26,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/manifest.test.js dist-test/test/manifest_mcp.test.js dist-test/test/protocol.test.js dist-test/test/client.test.js dist-test/test/client_url.test.js dist-test/test/client_lifecycle.test.js dist-test/test/client_stream.test.js dist-test/test/client_handle_chat.test.js dist-test/test/expose.test.js dist-test/test/client_nonerror_throw.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/manifest.test.js dist-test/test/manifest_mcp.test.js dist-test/test/protocol.test.js dist-test/test/client.test.js dist-test/test/client_url.test.js dist-test/test/client_lifecycle.test.js dist-test/test/client_stream.test.js dist-test/test/client_handle_chat.test.js dist-test/test/expose.test.js dist-test/test/client_nonerror_throw.test.js dist-test/test/client_reconnect_stop.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
