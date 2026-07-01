@@ -359,9 +359,13 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
         # streaming HTTP callers don't time out.
         if inspect.isasyncgen(result):
             if streaming_requested:
+                final_finish: Optional[str] = None
                 async for chunk in result:
+                    _, _, finish = _chunk_fields(chunk)
+                    if finish:
+                        final_finish = finish
                     await ws.send(_serialize_stream_chunk(chunk, env.request_id))
-                await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
+                await ws.send(chat_chunk("", env.request_id, done=True, finish_reason=final_finish or "stop").to_json())
                 return
             else:
                 text_parts: list[str] = []
@@ -380,9 +384,13 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
                 return
         if inspect.isgenerator(result):
             if streaming_requested:
+                final_finish = None
                 for chunk in result:
+                    _, _, finish = _chunk_fields(chunk)
+                    if finish:
+                        final_finish = finish
                     await ws.send(_serialize_stream_chunk(chunk, env.request_id))
-                await ws.send(chat_chunk("", env.request_id, done=True, finish_reason="stop").to_json())
+                await ws.send(chat_chunk("", env.request_id, done=True, finish_reason=final_finish or "stop").to_json())
                 return
             else:
                 text_parts = []
