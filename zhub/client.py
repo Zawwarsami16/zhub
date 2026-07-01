@@ -352,8 +352,16 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
     try:
         result = pub.chat_handler(messages, options)
 
-        # Streaming first — before iscoroutine check, since some Python versions
-        # treat sync generators ambiguously and `await` on a generator throws.
+        # An `async def` chat_handler that itself returns an async generator
+        # ends up as a coroutine wrapping the generator. Awaiting it first
+        # unwraps the coroutine so the isasyncgen / isgenerator branches below
+        # see the real streaming source instead of dropping to the single-shot
+        # path (which would stringify the generator into ``"<async_generator …>"``).
+        if inspect.iscoroutine(result):
+            result = await result
+
+        # Streaming first — before the earlier iscoroutine check we could have
+        # a plain sync generator, and `await` on a generator throws.
         # If the caller requested streaming, emit chat-chunk per yield. Otherwise
         # accumulate the generator output into a single chat-response so non-
         # streaming HTTP callers don't time out.
@@ -407,10 +415,6 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
                 payload = _finalize_accumulated(text_parts, tc_slots, final_finish)
                 await ws.send(Envelope(type="chat-response", request_id=env.request_id, payload=payload).to_json())
                 return
-
-        # Coroutine — await for the final value
-        if inspect.iscoroutine(result):
-            result = await result
 
         # Single-shot
         if isinstance(result, str):
