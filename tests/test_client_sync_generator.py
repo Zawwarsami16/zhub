@@ -51,8 +51,10 @@ async def test_sync_gen_streaming_dict_chunks_extract_delta():
     # The chunk's own done/finish_reason survive serialization.
     assert payloads[1]["done"] is True
     assert payloads[1]["finish_reason"] == "length"
-    # Trailing synthetic terminator closes the stream.
-    assert payloads[-1] == {"delta": "", "done": True, "finish_reason": "stop"}
+    # Trailing synthetic terminator closes the stream and echoes the
+    # handler-supplied finish_reason (here 'length' — max-tokens truncation),
+    # not a hardcoded 'stop' that would misrepresent the outcome.
+    assert payloads[-1] == {"delta": "", "done": True, "finish_reason": "length"}
 
 
 @pytest.mark.asyncio
