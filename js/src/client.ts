@@ -55,15 +55,16 @@ export type ChatChunkLike =
       [key: string]: unknown;
     };
 
-export type ChatHandler = (
-  messages: Array<{ role: string; content: string }>,
-  options: Record<string, unknown>,
-) =>
+export type ChatHandlerResult =
   | string
-  | Promise<string>
   | { text: string; finish_reason?: string }
   | AsyncIterable<ChatChunkLike>
   | Iterable<ChatChunkLike>;
+
+export type ChatHandler = (
+  messages: Array<{ role: string; content: string }>,
+  options: Record<string, unknown>,
+) => ChatHandlerResult | Promise<ChatHandlerResult>;
 
 export type ChatResult = Record<string, unknown> & { text: string };
 
@@ -332,7 +333,16 @@ export class ZhubPublication {
     delete (options as Record<string, unknown>).messages;
     const streamingRequested = Boolean((options as Record<string, unknown>).stream);
     try {
-      const result = this.chatHandler(messages, options);
+      const raw = this.chatHandler(messages, options);
+      // Await a Promise-returning handler (async def) first so gen-detection
+      // runs against the resolved value. Otherwise an `async` handler that
+      // returns a generator resolves to a Promise, which has neither
+      // Symbol.asyncIterator nor Symbol.iterator — it falls through to
+      // single-shot, awaits the coroutine, then spreads the generator object
+      // into the payload as if it were a plain dict, silently emitting
+      // {text: '', finish_reason: 'stop'}. Mirror of Python fix c6a7a6c.
+      const isPromise = raw && typeof (raw as { then?: unknown }).then === 'function';
+      const result = isPromise ? await (raw as Promise<unknown>) : raw;
 
       const isAsyncIter =
         result && typeof result === 'object' && Symbol.asyncIterator in (result as object);
@@ -352,7 +362,7 @@ export class ZhubPublication {
         return;
       }
 
-      const awaited = await Promise.resolve(result as string | { text: string });
+      const awaited = result as string | { text: string };
       let payload: Record<string, unknown>;
       if (typeof awaited === 'string') {
         payload = { text: awaited, finish_reason: 'stop' };
