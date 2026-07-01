@@ -57,6 +57,12 @@ class PeerRegistry:
             if not isinstance(data, list):
                 log.warning("peer %s returned non-list registry; treating as empty", peer_url)
                 data = []
+            else:
+                # Individual non-dict entries (a peer returning
+                # ``[{"name":"x"}, "junk", 42]``) crash aggregate() at
+                # ``dict(e)``; one bad row would 500 /registry/global,
+                # dropping the local hub's own listings too.
+                data = [e for e in data if isinstance(e, dict)]
         except Exception as e:
             log.warning("peer %s unreachable: %s", peer_url, e)
             # Negatively cache the failure: without this a dead peer is
