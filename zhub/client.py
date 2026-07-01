@@ -425,6 +425,12 @@ async def _handle_chat(pub: ZhubPublication, ws, env: Envelope) -> None:
             payload = dict(result)
             payload.setdefault("finish_reason", "stop")
             payload.setdefault("text", "")
+        elif result is None:
+            # Handler forgot `return` (function body ran a `print` then fell off
+            # the end). Emit an empty response, not `str(None) == "None"`, which
+            # would ship the literal three-character string "None" over the
+            # wire as the assistant reply. Matches the JS port.
+            payload = {"text": "", "finish_reason": "stop"}
         else:
             payload = {"text": str(result), "finish_reason": "stop"}
         await ws.send(Envelope(
