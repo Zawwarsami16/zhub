@@ -82,6 +82,27 @@ async def test_non_list_registry_treated_as_empty():
         await pr.close()
 
 
+async def test_non_dict_entries_dropped_from_registry():
+    """A peer registry with mixed dict / non-dict entries returns only the
+    dict rows — regression for aggregate() crashing at ``dict(e)`` on a
+    string/int entry, which would have 500'd /registry/global on the local
+    hub and taken its own listings down with it."""
+    def handler(request):
+        return httpx.Response(200, json=[{"name": "good"}, "junk", 42, None,
+                                          {"name": "also-good"}])
+
+    pr = _registry(["http://peer.example"], handler)
+    try:
+        assert await pr.get("http://peer.example") == [
+            {"name": "good"}, {"name": "also-good"},
+        ]
+        out = await pr.aggregate()
+        assert [e["name"] for e in out] == ["good", "also-good"]
+        assert all(e["origin"] == "http://peer.example" for e in out)
+    finally:
+        await pr.close()
+
+
 async def test_aggregate_annotates_origin():
     """aggregate() tags every peer entry with its origin URL."""
     def handler(request):
