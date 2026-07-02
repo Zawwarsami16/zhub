@@ -193,3 +193,62 @@ async def test_request_times_out_when_server_silent(silent_stub_path):
             await client.call_tool("echo", {"text": "x"})
     finally:
         await client.close()
+
+
+# A stub that floods stderr with 2 MB before answering initialize, then again
+# on every tools/list. Without a drain, the ~64KB pipe buffer + StreamReader
+# limit fills, the subprocess blocks on stderr.flush() and never gets to read
+# stdin — initialize never completes.
+STDERR_FLOOD_STUB_SCRIPT = '''
+import json, sys
+for _ in range(32):
+    sys.stderr.write("x" * (64 * 1024))
+    sys.stderr.flush()
+sys.stderr.write("\\n")
+sys.stderr.flush()
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    rid = req.get("id")
+    method = req.get("method")
+    if method == "initialize":
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {}}) + "\\n")
+        sys.stdout.flush()
+    elif method == "tools/list":
+        for _ in range(32):
+            sys.stderr.write("y" * (64 * 1024))
+            sys.stderr.flush()
+        sys.stderr.write("\\n"); sys.stderr.flush()
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": rid, "result": {"tools": []}}) + "\\n")
+        sys.stdout.flush()
+'''
+
+
+@pytest.fixture
+def stderr_flood_stub_path():
+    fd, path = tempfile.mkstemp(suffix="_stderr_flood_stub.py")
+    with os.fdopen(fd, "w") as f:
+        f.write(STDERR_FLOOD_STUB_SCRIPT)
+    yield path
+    os.unlink(path)
+
+
+@pytest.mark.asyncio
+async def test_stderr_flood_does_not_block_subprocess(stderr_flood_stub_path):
+    # Regression: stderr=PIPE without a consumer used to fill the pipe buffer
+    # (+ asyncio StreamReader limit), pause the transport, and force the child
+    # to block on stderr.flush() — no more stdin reads, no more stdout writes,
+    # every request timed out. The drain task must consume stderr as it comes
+    # in so the subprocess stays responsive.
+    client = MCPClient([sys.executable, stderr_flood_stub_path])
+    # Bounded externally: without the drain this would hang past init_timeout,
+    # so an outer wait_for guarantees the test fails fast rather than
+    # slowing the suite.
+    await asyncio.wait_for(client.start(init_timeout=8.0), timeout=10.0)
+    try:
+        tools = await asyncio.wait_for(client.list_tools(), timeout=8.0)
+        assert tools == []
+    finally:
+        await client.close()
