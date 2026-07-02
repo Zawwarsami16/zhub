@@ -61,6 +61,7 @@ class MCPClient:
         self._next_id = 0
         self._pending: dict[int, asyncio.Future] = {}
         self._reader_task: asyncio.Task | None = None
+        self._stderr_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._initialized = False
 
@@ -74,6 +75,12 @@ class MCPClient:
             env=self.env,
         )
         self._reader_task = asyncio.create_task(self._reader_loop())
+        # Drain the subprocess's stderr. If we leave stderr=PIPE without a
+        # consumer, an MCP server that logs verbosely fills the ~64KB pipe
+        # buffer, blocks on its next stderr write, and stops answering any
+        # request — every subsequent call then times out. Logging lines at
+        # debug keeps them recoverable when the operator turns logging up.
+        self._stderr_task = asyncio.create_task(self._stderr_drain())
         try:
             await asyncio.wait_for(
                 self._request("initialize", {
@@ -115,6 +122,13 @@ class MCPClient:
             except (asyncio.CancelledError, Exception):
                 pass
             self._reader_task = None
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._stderr_task = None
         if self.process and self.process.returncode is None:
             try:
                 self.process.terminate()
@@ -207,3 +221,26 @@ class MCPClient:
             return
         # Clean EOF (the `break` above): subprocess closed its output stream.
         self._fail_pending(MCPError("MCP subprocess closed its output stream"))
+
+    async def _stderr_drain(self) -> None:
+        """Discard-with-debug-log drain for the subprocess's stderr.
+
+        Runs alongside `_reader_loop`; consumes chunks so the pipe buffer
+        never fills. Uses `read(N)` rather than `readline()` — a spammy MCP
+        server that writes megabytes without a newline (progress bars, JSON
+        blobs on one line) would otherwise accumulate past StreamReader's
+        limit, pause the transport, and refill the pipe anyway. On EOF the
+        drain returns cleanly — stdout EOF terminates the client, stderr EOF
+        alone is expected on shutdown and carries no signal we act on.
+        """
+        assert self.process and self.process.stderr
+        try:
+            while True:
+                chunk = await self.process.stderr.read(4096)
+                if not chunk:
+                    return
+                log.debug("mcp stderr: %s", chunk.decode("utf-8", "replace").rstrip("\n"))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.debug("mcp stderr drain stopped: %s", e)
