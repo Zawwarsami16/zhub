@@ -211,3 +211,77 @@ async def test_extend_rejects_oversized_body(hub):
             headers={"Authorization": f"Bearer {pub.api_key}"},
         )
     assert r.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_non_owner(hub):
+    """A publisher must not be able to delete another publisher's extension."""
+    owner = publish(
+        name="ext-owner",
+        description="owner",
+        chat_handler=lambda m, o: "ok",
+        hub_url=f"ws://127.0.0.1:{hub}",
+    )
+    intruder = publish(
+        name="ext-intruder",
+        description="intruder",
+        chat_handler=lambda m, o: "ok",
+        hub_url=f"ws://127.0.0.1:{hub}",
+    )
+    for _ in range(50):
+        if owner.api_key and intruder.api_key:
+            break
+        await asyncio.sleep(0.1)
+
+    assert owner.api_key and intruder.api_key
+    assert owner.api_key != intruder.api_key
+
+    async with httpx.AsyncClient(timeout=5.0) as c:
+        created = (await c.post(
+            f"http://127.0.0.1:{hub}/entity/extend",
+            json={"section": "patterns", "title": "mine", "body": "hands off"},
+            headers={"Authorization": f"Bearer {owner.api_key}"},
+        )).json()
+        ext_id = created["id"]
+
+        # intruder attempts to delete -> must be forbidden, row must remain
+        forbidden = await c.delete(
+            f"http://127.0.0.1:{hub}/entity/extend/{ext_id}",
+            headers={"Authorization": f"Bearer {intruder.api_key}"},
+        )
+        assert forbidden.status_code == 403
+
+        listing = (await c.get(
+            f"http://127.0.0.1:{hub}/entity/extend",
+            headers={"Authorization": f"Bearer {owner.api_key}"},
+        )).json()["extensions"]
+        assert any(e["id"] == ext_id for e in listing)
+
+        # owner still can delete their own
+        ok = await c.delete(
+            f"http://127.0.0.1:{hub}/entity/extend/{ext_id}",
+            headers={"Authorization": f"Bearer {owner.api_key}"},
+        )
+        assert ok.status_code == 200
+        assert ok.json()["deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_delete_missing_id_returns_404(hub):
+    """Deleting a non-existent id must still 404, not 403."""
+    pub = publish(
+        name="ext-bot-missing", description="x",
+        chat_handler=lambda m, o: "ok",
+        hub_url=f"ws://127.0.0.1:{hub}",
+    )
+    for _ in range(50):
+        if pub.api_key:
+            break
+        await asyncio.sleep(0.1)
+
+    async with httpx.AsyncClient(timeout=5.0) as c:
+        r = await c.delete(
+            f"http://127.0.0.1:{hub}/entity/extend/999999",
+            headers={"Authorization": f"Bearer {pub.api_key}"},
+        )
+    assert r.status_code == 404
