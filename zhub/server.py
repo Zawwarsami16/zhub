@@ -1021,8 +1021,14 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         if hub.storage is None:
             raise HTTPException(503, "entity extensions require a hub --db")
         api_key = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-        if not hub.lookup_by_api_key(api_key):
+        caller = hub.lookup_by_api_key(api_key)
+        if not caller:
             raise HTTPException(401, "invalid api key")
+        existing = hub.storage.get_entity_extension(ext_id)
+        if existing is None:
+            raise HTTPException(404, f"no extension with id {ext_id}")
+        if existing["added_by"] != caller:
+            raise HTTPException(403, "only the publisher that added this extension can delete it")
         ok = hub.storage.delete_entity_extension(ext_id)
         if not ok:
             raise HTTPException(404, f"no extension with id {ext_id}")

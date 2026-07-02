@@ -199,6 +199,22 @@ class Storage:
             for r in rows
         ]
 
+    def get_entity_extension(self, ext_id: int) -> dict[str, Any] | None:
+        """Fetch a single extension by id (for ownership checks). None if missing."""
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id, section, title, body, added_by, added_at "
+                "FROM entity_extensions WHERE id = ?",
+                (ext_id,),
+            )
+            r = cur.fetchone()
+        if r is None:
+            return None
+        return {
+            "id": r[0], "section": r[1], "title": r[2],
+            "body": r[3], "added_by": r[4], "added_at": r[5],
+        }
+
     def delete_entity_extension(self, ext_id: int) -> bool:
         """Delete by id; returns True if a row was removed, False otherwise."""
         with self._lock:
