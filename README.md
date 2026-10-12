@@ -28,6 +28,8 @@ GROQ_API_KEY=gsk_... zhub up
 ```
 
 > **First time?** A 10-minute hands-on walkthrough lives at [`docs/TUTORIAL.md`](docs/TUTORIAL.md) — clone to "Pocket talks to your AI" in a single sitting.
+>
+> **Want to test the architecture?** [Open engineering challenge #01](https://github.com/Zawwarsami16/zhub/issues/7) asks whether one zhub endpoint behaves consistently across different clients. Try it, share a reproducible failure, or challenge an assumption.
 
 (`zhub up` is the installed CLI; `python -m zhub up` is the equivalent module form when the script isn't on PATH.)
 
