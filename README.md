@@ -278,6 +278,8 @@ $ journalctl -u zhub -f
 2026-05-10 14:22:18 INFO zhub.access: 200 POST /exposures/ex_x9f/invoke 23ms
 ```
 
+**Interpreting execution evidence:** Metrics and access logs show what reached the hub; they do not, by themselves, establish that a downstream task changed an external system. I examine this distinction in [From Knowing to Doing (A8)](https://github.com/Zawwarsami16/Public-Research-Tree/tree/main/A/A8), with an [open research question](https://github.com/Zawwarsami16/Public-Research-Tree/issues/8) on what would count as independent verification.
+
 ---
 
 ## Self-knowledge layer
